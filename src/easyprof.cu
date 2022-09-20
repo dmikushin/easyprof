@@ -1,6 +1,5 @@
 #include <algorithm>
 #include <chrono>
-#include <cuda_runtime.h>
 #include <cxxabi.h>
 #include <dlfcn.h>
 #include <iostream>
@@ -14,13 +13,31 @@
 #include <tuple>
 #include <vector>
 
-#define LIBDL "libdl.so"
-#define LIBCUDART "/usr/local/cuda/lib64/libcudart.so"
+#if defined(__CUDACC__)
+using gpuError_t = cudaError_t;
+using gpuStream_t = cudaStream_t;
+static const auto gpuSuccess = cudaSuccess;
+#define __gpuRegisterFunction __cudaRegisterFunction
+#define gpuLaunchKernel(...) cudaLaunchKernel(__VA_ARGS__)
+#define gpuStreamSynchronize(...) cudaStreamSynchronize(__VA_ARGS__)
+#define gpuDeviceSynchronize() cudaDeviceSynchronize()
+#define LIBGPURT "/usr/local/cuda/lib64/libcudart.so"
+#else
+#include <hip/hip_runtime.h>
+using gpuError_t = hipError_t;
+using gpuStream_t = hipStream_t;
+static const auto gpuSuccess = hipSuccess;
+#define __gpuRegisterFunction __hipRegisterFunction
+#define gpuLaunchKernel(...) hipLaunchKernel(__VA_ARGS__)
+#define gpuStreamSynchronize(...) hipStreamSynchronize(__VA_ARGS__)
+#define gpuDeviceSynchronize() hipDeviceSynchronize()
+#define LIBGPURT "/opt/rocm/hip/lib/libamdhip64.so"
+#endif
 
 #define LOG(...) printf(__VA_ARGS__)
 
 static void* libdl = nullptr;
-static void* libcudart = nullptr;
+static void* libgpurt = nullptr;
 
 #define bind_lib(path, lib) \
 if (!lib) \
@@ -33,12 +50,25 @@ if (!lib) \
 	} \
 }
 
+static std::string api_name(const std::string& sym)
+{
+	std::string result = sym;
+#ifdef __CUDACC__
+	return result.replace(result.find("gpu"), 3, "cuda");
+#elif __HIPCC__
+	return result.replace(result.find("gpu"), 3, "hip");
+#else
+	return result;
+#endif
+}
+
 #define bind_sym(handle, sym, retty, ...) \
 typedef retty (*sym##_func_t)(__VA_ARGS__); \
 static sym##_func_t sym##_real = nullptr; \
 if (!sym##_real) \
 { \
-	sym##_real = (sym##_func_t)dlsym(handle, #sym); \
+	auto name = api_name(#sym); \
+	sym##_real = (sym##_func_t)dlsym(handle, name.c_str()); \
 	if (!sym##_real) \
 	{ \
 		LOG("Error loading %s : %s", #sym, dlerror()); \
@@ -63,7 +93,7 @@ struct GPUfunction
 std::map<void*, GPUfunction> funcs;
 
 extern "C"
-void CUDARTAPI __cudaRegisterFunction(
+void __gpuRegisterFunction(
 	void** vfatCubinHandle,
 	const char* hostFun,
 	char* deviceFun,
@@ -75,17 +105,17 @@ void CUDARTAPI __cudaRegisterFunction(
 	dim3* gDim,
 	int* wSize)
 {
-	bind_lib(LIBCUDART, libcudart);
-	bind_sym(libcudart, __cudaRegisterFunction, void,
+	bind_lib(LIBGPURT, libgpurt);
+	bind_sym(libgpurt, __gpuRegisterFunction, void,
 		void**, const char*, char*, const char*,
 		int, uint3*, uint3*, dim3*, dim3*, int*);
 
-	__cudaRegisterFunction_real(
+	__gpuRegisterFunction_real(
 		vfatCubinHandle, hostFun, deviceFun, deviceName,
 		thread_limit, tid, bid, bDim, gDim, wSize);
 #if 0
 #define VAL_OR_NIL(ptr, prop) (ptr ? ((ptr)->prop) : 0)
-	LOG("__cudaRegisterFunction(\"%s\", %p, %p, %p, %d, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %d)\n",
+	LOG("__gpuRegisterFunction(\"%s\", %p, %p, %p, %d, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %d)\n",
 		deviceName, vfatCubinHandle, hostFun, deviceFun, thread_limit,
 		VAL_OR_NIL(tid, x), VAL_OR_NIL(tid, y), VAL_OR_NIL(tid, z),
 		VAL_OR_NIL(bid, x), VAL_OR_NIL(bid, y), VAL_OR_NIL(bid, z),
@@ -156,7 +186,7 @@ class Timer
 	bool synced = false;
 
 	std::map<
-		cudaStream_t, // for each stream
+		gpuStream_t, // for each stream
 		std::map<
 			std::string, // for each kernel name
 			std::pair<
@@ -201,7 +231,7 @@ public :
 	}
 
 	void measure(const std::string& name,
-		const dim3& gridDim, const dim3& blockDim, cudaStream_t stream)
+		const dim3& gridDim, const dim3& blockDim, gpuStream_t stream)
 	{
 		auto& kernel = kernels[stream][name];
 		if ((kernel.second.size() == 0) || (kernel.second.size() == kernel.second.capacity()))
@@ -217,10 +247,10 @@ public :
 	
 		if (synced)
 		{
-			cudaError_t status = cudaStreamSynchronize(stream);
+			gpuError_t status = gpuStreamSynchronize(stream);
 			
 			// TODO If status is bad, forward it to the next user call
-			// of cudaStreamSynchronize().
+			// of gpuStreamSynchronize().
 			
 			end = std::chrono::high_resolution_clock::now();
 		}
@@ -234,7 +264,7 @@ public :
 		kernel.second.push_back(std::make_tuple(begin, end, gridDim, blockDim, 0));
 	}
 
-	void sync(cudaStream_t stream)
+	void sync(gpuStream_t stream)
 	{
 		if (synced) return;
 
@@ -367,19 +397,19 @@ public :
 static Timer timer;
 
 extern "C"
-cudaError_t cudaLaunchKernel(
+gpuError_t gpuLaunchKernel(
 	const void* func,
 	dim3 gridDim,
 	dim3 blockDim,
 	void** args,
 	size_t sharedMem,
-	cudaStream_t stream)
+	gpuStream_t stream)
 {
-	bind_lib(LIBCUDART, libcudart);
-	bind_sym(libcudart, cudaLaunchKernel, cudaError_t,
-		const void*, dim3, dim3, void**, size_t, cudaStream_t);
+	bind_lib(LIBGPURT, libgpurt);
+	bind_sym(libgpurt, gpuLaunchKernel, gpuError_t,
+		const void*, dim3, dim3, void**, size_t, gpuStream_t);
 
-	cudaError_t result = cudaLaunchKernel_real(func, gridDim, blockDim, args, sharedMem, stream);
+	gpuError_t result = gpuLaunchKernel_real(func, gridDim, blockDim, args, sharedMem, stream);
 	auto name = funcs[(void*)func].deviceName;
 	if (matcher.isMatching(name))
 	{
@@ -389,7 +419,7 @@ cudaError_t cudaLaunchKernel(
 			sharedMem, stream, result);
 #endif	
 		// Don't do anything else, if kernel launch was not successful.
-		if (result != cudaSuccess) return result;
+		if (result != gpuSuccess) return result;
 		
 		if (timer.isTiming())
 		{
@@ -404,14 +434,14 @@ cudaError_t cudaLaunchKernel(
 }
 
 extern "C"
-cudaError_t cudaStreamSynchronize(
-	cudaStream_t stream)
+gpuError_t gpuStreamSynchronize(
+	gpuStream_t stream)
 {
-	bind_lib(LIBCUDART, libcudart);
-	bind_sym(libcudart, cudaStreamSynchronize, cudaError_t, cudaStream_t);
+	bind_lib(LIBGPURT, libgpurt);
+	bind_sym(libgpurt, gpuStreamSynchronize, gpuError_t, gpuStream_t);
 
-	cudaError_t result = cudaStreamSynchronize_real(stream);
-	if (result != cudaSuccess) return result;
+	gpuError_t result = gpuStreamSynchronize_real(stream);
+	if (result != gpuSuccess) return result;
 		
 	if (timer.isTiming())
 	{
@@ -422,13 +452,13 @@ cudaError_t cudaStreamSynchronize(
 }
 
 extern "C"
-cudaError_t cudaDeviceSynchronize()
+gpuError_t gpuDeviceSynchronize()
 {
-	bind_lib(LIBCUDART, libcudart);
-	bind_sym(libcudart, cudaDeviceSynchronize, cudaError_t);
+	bind_lib(LIBGPURT, libgpurt);
+	bind_sym(libgpurt, gpuDeviceSynchronize, gpuError_t);
 
-	cudaError_t result = cudaDeviceSynchronize_real();
-	if (result != cudaSuccess) return result;
+	gpuError_t result = gpuDeviceSynchronize_real();
+	if (result != gpuSuccess) return result;
 		
 	if (timer.isTiming())
 	{
