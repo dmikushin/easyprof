@@ -13,16 +13,7 @@
 #include <tuple>
 #include <vector>
 
-#if defined(__CUDACC__)
-using gpuError_t = cudaError_t;
-using gpuStream_t = cudaStream_t;
-static const auto gpuSuccess = cudaSuccess;
-#define __gpuRegisterFunction __cudaRegisterFunction
-#define gpuLaunchKernel(...) cudaLaunchKernel(__VA_ARGS__)
-#define gpuStreamSynchronize(...) cudaStreamSynchronize(__VA_ARGS__)
-#define gpuDeviceSynchronize() cudaDeviceSynchronize()
-#define LIBGPURT "/usr/local/cuda/lib64/libcudart.so"
-#else
+#if defined(__HIPCC__)
 #include <hip/hip_runtime.h>
 using gpuError_t = hipError_t;
 using gpuStream_t = hipStream_t;
@@ -32,6 +23,16 @@ static const auto gpuSuccess = hipSuccess;
 #define gpuStreamSynchronize(...) hipStreamSynchronize(__VA_ARGS__)
 #define gpuDeviceSynchronize() hipDeviceSynchronize()
 #define LIBGPURT "/opt/rocm/hip/lib/libamdhip64.so"
+#else
+#include <cuda_runtime.h>
+using gpuError_t = cudaError_t;
+using gpuStream_t = cudaStream_t;
+static const auto gpuSuccess = cudaSuccess;
+#define __gpuRegisterFunction __cudaRegisterFunction
+#define gpuLaunchKernel(...) cudaLaunchKernel(__VA_ARGS__)
+#define gpuStreamSynchronize(...) cudaStreamSynchronize(__VA_ARGS__)
+#define gpuDeviceSynchronize() cudaDeviceSynchronize()
+#define LIBGPURT "/usr/local/cuda/lib64/libcudart.so"
 #endif
 
 #define LOG(...) printf(__VA_ARGS__)
@@ -53,12 +54,10 @@ if (!lib) \
 static std::string api_name(const std::string& sym)
 {
 	std::string result = sym;
-#ifdef __CUDACC__
-	return result.replace(result.find("gpu"), 3, "cuda");
-#elif __HIPCC__
+#if __HIPCC__
 	return result.replace(result.find("gpu"), 3, "hip");
 #else
-	return result;
+	return result.replace(result.find("gpu"), 3, "cuda");
 #endif
 }
 

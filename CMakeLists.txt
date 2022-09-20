@@ -16,9 +16,9 @@ if (CMAKE_CUDA_COMPILER)
 enable_language(CUDA)
 find_package(CUDAToolkit REQUIRED)
 
-add_library(${PROJECT_NAME}_cuda SHARED "src/${PROJECT_NAME}.cu")
+add_library(${PROJECT_NAME}_cuda SHARED "src/${PROJECT_NAME}.cpp")
 target_include_directories(${PROJECT_NAME}_cuda PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
-target_link_libraries(${PROJECT_NAME}_cuda ${CMAKE_DL_LIBS})
+target_link_libraries(${PROJECT_NAME}_cuda ${CMAKE_DL_LIBS} CUDA::cudart)
 
 set(${PROJECT_NAME}_target ${PROJECT_NAME}_cuda)
 endif()

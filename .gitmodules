@@ -1,3 +1,7 @@
-[submodule "ThirdParty/bilinear"]
+[submodule "ThirdParty/superbenchmark"]
+	path = ThirdParty/superbenchmark
+	url = https://github.com/microsoft/superbenchmark.git
+[submodule "ThirdParty/sample"]
 	path = ThirdParty/sample
-	url = git@github.com:dmikushin/bilinear.git
+	url = https://github.com/dmikushin/bilinear.git
+	branch = cuda
