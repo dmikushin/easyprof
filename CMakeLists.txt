@@ -6,6 +6,8 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+add_subdirectory(ThirdParty/sample)
+
 include(CheckLanguage)
 
 check_language(CUDA)
@@ -17,6 +19,8 @@ find_package(CUDAToolkit REQUIRED)
 add_library(${PROJECT_NAME}_cuda SHARED "src/${PROJECT_NAME}.cpp")
 target_include_directories(${PROJECT_NAME}_cuda PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(${PROJECT_NAME}_cuda ${CMAKE_DL_LIBS} CUDA::cudart)
+
+set(${PROJECT_NAME}_target ${PROJECT_NAME}_cuda)
 endif()
 
 check_language(HIP)
@@ -36,7 +40,13 @@ find_package(HIP REQUIRED)
 add_library(${PROJECT_NAME}_hip SHARED "src/${PROJECT_NAME}.cpp")
 target_include_directories(${PROJECT_NAME}_hip PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(${PROJECT_NAME}_hip ${CMAKE_DL_LIBS} HIP::hiprt)
+
+set(${PROJECT_NAME}_target ${PROJECT_NAME}_hip)
 endif()
+
+add_custom_target(${PROJECT_NAME}_test
+	COMMAND LD_PRELOAD=$<TARGET_FILE:${${PROJECT_NAME}_target}> PROFILE_TIME=1 $<TARGET_FILE:bilinear_gpu_unoptimized> ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/sample/thefox.bmp)
+add_dependencies(${PROJECT_NAME}_test bilinear_gpu_unoptimized)
 
 # TODO Python frontend
 

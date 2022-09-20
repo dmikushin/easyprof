@@ -203,7 +203,7 @@ public :
 	void measure(const std::string& name,
 		const dim3& gridDim, const dim3& blockDim, cudaStream_t stream)
 	{
-		auto kernel = kernels[stream][name];
+		auto& kernel = kernels[stream][name];
 		if ((kernel.second.size() == 0) || (kernel.second.size() == kernel.second.capacity()))
 		{
 			// Reserve a lot of memory in advance to make re-allocations
@@ -248,7 +248,7 @@ public :
 			
 			auto& to_sync = kernel.first;
 			to_sync = std::min(to_sync, static_cast<unsigned int>(kernel.second.size()));
-			for (int i = 0, ii = kernel.second.size() - 1 - to_sync; i < to_sync; i++)
+			for (int i = 0, ii = kernel.second.size() - to_sync; i < to_sync; i++)
 			{
 				// Set the ending timestamp and the synchronization order index.
 				std::get<1>(kernel.second[ii]) = end;
@@ -256,7 +256,7 @@ public :
 			}
 
 			// Reset the unsynced counter.
-			to_sync = kernel.first;
+			to_sync = 0;
 		}
 		
 		sync_group_index++;
@@ -295,7 +295,7 @@ public :
 				const auto& unsynced = kernel.second.first;
 				if (unsynced)
 				{
-					fprintf(stderr, "Error: kernel \"%s\" contains %d unsycned launches!\n",
+					fprintf(stderr, "Error: kernel \"%s\" contains %d unsynced launches!\n",
 						name.c_str(), unsynced);
 				}
 				

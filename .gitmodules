@@ -1,0 +1,3 @@
+[submodule "ThirdParty/bilinear"]
+	path = ThirdParty/sample
+	url = git@github.com:dmikushin/bilinear.git
