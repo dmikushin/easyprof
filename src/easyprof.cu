@@ -4,6 +4,7 @@
 #include <dlfcn.h>
 #include <iostream>
 #include <map>
+#include <memory>
 #include <regex>
 #include <stdint.h>
 #include <stdio.h>
@@ -19,6 +20,9 @@ using gpuError_t = hipError_t;
 using gpuStream_t = hipStream_t;
 static const auto gpuSuccess = hipSuccess;
 #define __gpuRegisterFunction __hipRegisterFunction
+#define gpuFuncAttributes hipFuncAttributes
+#define gpuFuncGetAttributes(...) hipFuncGetAttributes(__VA_ARGS__)
+#define gpuGetLastError(...) hipGetLastError(__VA_ARGS__)
 #define gpuLaunchKernel(...) hipLaunchKernel(__VA_ARGS__)
 #define gpuStreamSynchronize(...) hipStreamSynchronize(__VA_ARGS__)
 #define gpuDeviceSynchronize() hipDeviceSynchronize()
@@ -29,6 +33,9 @@ using gpuError_t = cudaError_t;
 using gpuStream_t = cudaStream_t;
 static const auto gpuSuccess = cudaSuccess;
 #define __gpuRegisterFunction __cudaRegisterFunction
+#define gpuFuncAttributes cudaFuncAttributes
+#define gpuFuncGetAttributes(...) cudaFuncGetAttributes(__VA_ARGS__)
+#define gpuGetLastError(...) cudaGetLastError(__VA_ARGS__)
 #define gpuLaunchKernel(...) cudaLaunchKernel(__VA_ARGS__)
 #define gpuStreamSynchronize(...) cudaStreamSynchronize(__VA_ARGS__)
 #define gpuDeviceSynchronize() cudaDeviceSynchronize()
@@ -87,9 +94,27 @@ struct GPUfunction
 	dim3 bDim;
 	dim3 gDim;
 	int wSize;
+	int nregs;
 };
 
-std::map<void*, GPUfunction> funcs;
+class Matcher;
+class Timer;
+
+// Maintaining the proper order of destruction.
+struct Profiler
+{
+	std::map<void*, std::shared_ptr<GPUfunction>> funcs;
+
+	Matcher* matcher;
+
+	// TODO must support threads.
+	Timer* timer;
+	
+	Profiler();
+	~Profiler();
+};
+
+static Profiler profiler;
 
 extern "C"
 void __gpuRegisterFunction(
@@ -127,7 +152,7 @@ void __gpuRegisterFunction(
 
 	auto uint3zero = uint3{};
 	auto dim3zero = dim3{};
-	funcs[(void*)hostFun] =
+	profiler.funcs[(void*)hostFun] = std::make_shared<GPUfunction>(GPUfunction
 	{
 		vfatCubinHandle,
 		hostFun,
@@ -138,12 +163,15 @@ void __gpuRegisterFunction(
 		(bid ? *bid : uint3zero),
 		(bDim ? *bDim : dim3zero),
 		(gDim ? *gDim : dim3zero),
-		(wSize ? *wSize : 0)
-	};
+		(wSize ? *wSize : 0),
+		0 // nregs, not available yet
+	});
 }
 
 class Matcher
 {
+	const std::map<void*, std::shared_ptr<GPUfunction>>& funcs;
+
 	std::string pattern;
 
 public :
@@ -160,14 +188,12 @@ public :
 		return false;
 	}
 
-	Matcher()
+	Matcher(const std::map<void*, std::shared_ptr<GPUfunction>>& funcs_) : funcs(funcs_)
 	{
 		const char* cpattern = getenv("PROFILE_REGEX");
 		if (cpattern) pattern = cpattern;
 	}
 };
-
-static Matcher matcher;
 
 static bool operator<(const dim3& v1, const dim3& v2)
 {
@@ -178,6 +204,8 @@ static bool operator<(const dim3& v1, const dim3& v2)
 
 class Timer
 {
+	const std::map<void*, std::shared_ptr<GPUfunction>>& funcs;
+
 	bool timing = false;
 	
 	// Enforce stream synchronization, when measuring the kernel
@@ -188,8 +216,9 @@ class Timer
 		gpuStream_t, // for each stream
 		std::map<
 			std::string, // for each kernel name
-			std::pair<
-				unsigned int, // how many unsynced kernels
+			std::tuple<
+				unsigned int, // the number of kernels to sync
+				const GPUfunction*, // the corresponding registered function
 				std::vector<
 					std::tuple<
 						std::chrono::time_point<std::chrono::high_resolution_clock>, // time begin
@@ -208,7 +237,7 @@ public :
 
 	bool isTiming() { return timing; }
 	
-	Timer()
+	Timer(const std::map<void*, std::shared_ptr<GPUfunction>>& funcs_) : funcs(funcs_)
 	{
 		const char* ctiming = getenv("PROFILE_TIME");
 		if (ctiming)
@@ -229,20 +258,24 @@ public :
 		}
 	}
 
-	void measure(const std::string& name,
+	void measure(const GPUfunction* func_,
 		const dim3& gridDim, const dim3& blockDim, gpuStream_t stream)
 	{
-		auto& kernel = kernels[stream][name];
-		if ((kernel.second.size() == 0) || (kernel.second.size() == kernel.second.capacity()))
+		auto& kernel = kernels[stream][func_->deviceName];
+		auto& launches = std::get<2>(kernel);
+		if ((launches.size() == 0) || (launches.size() == launches.capacity()))
 		{
+			// Assign the corresponding registered function.
+			auto& func = std::get<1>(kernel);
+			func = func_;
+		
 			// Reserve a lot of memory in advance to make re-allocations
 			// less disruptive.
-			kernel.second.reserve(kernel.second.size() + 1024 * 1024);
+			launches.reserve(launches.size() + 1024 * 1024);
 		}
 	
 		auto begin = std::chrono::high_resolution_clock::now();
 		std::chrono::time_point<std::chrono::high_resolution_clock> end;
-		bool is_synced = false;
 	
 		if (synced)
 		{
@@ -257,10 +290,11 @@ public :
 		{
 			// In asynchronous mode, we maintain how many latest
 			// kernel launches we need to synchronize.
-			kernel.first++;
+			auto& to_sync = std::get<0>(kernel);
+			to_sync++;
 		}
 		
-		kernel.second.push_back(std::make_tuple(begin, end, gridDim, blockDim, 0));
+		launches.push_back(std::make_tuple(begin, end, gridDim, blockDim, 0));
 	}
 
 	void sync(gpuStream_t stream)
@@ -275,13 +309,14 @@ public :
 			const auto& name = pair.first;
 			auto& kernel = pair.second;
 			
-			auto& to_sync = kernel.first;
-			to_sync = std::min(to_sync, static_cast<unsigned int>(kernel.second.size()));
-			for (int i = 0, ii = kernel.second.size() - to_sync; i < to_sync; i++)
+			auto& launches = std::get<2>(kernel);
+			auto& to_sync = std::get<0>(kernel);
+			to_sync = std::min(to_sync, static_cast<unsigned int>(launches.size()));
+			for (int i = 0, ii = launches.size() - to_sync; i < to_sync; i++)
 			{
 				// Set the ending timestamp and the synchronization order index.
-				std::get<1>(kernel.second[ii]) = end;
-				std::get<4>(kernel.second[ii]) = sync_group_index;
+				std::get<1>(launches[ii]) = end;
+				std::get<4>(launches[ii]) = sync_group_index;
 			}
 
 			// Reset the unsynced counter.
@@ -321,14 +356,18 @@ public :
 			{
 				const auto& name = kernel.first;
 
-				const auto& unsynced = kernel.second.first;
+				const auto& unsynced = std::get<0>(kernel.second);
 				if (unsynced)
 				{
 					fprintf(stderr, "Error: kernel \"%s\" contains %d unsynced launches!\n",
 						name.c_str(), unsynced);
 				}
+
+				// Retrieve the number of registers.
+				auto& func = std::get<1>(kernel.second);
+				unsigned int nregisters = func->nregs;
 				
-				const auto& timings = kernel.second.second;
+				const auto& timings = std::get<2>(kernel.second);
 				for (const auto& timing : timings)
 				{
 					const auto& begin = std::get<0>(timing);
@@ -336,9 +375,6 @@ public :
 					auto duration = std::chrono::duration<double, std::micro>{end - begin}.count();
 					const auto& gridDim = std::get<2>(timing);
 					const auto& blockDim = std::get<3>(timing);
-					
-					// TODO Retrieve the number of registers.
-					unsigned int nregisters = 0;
 					
 					results[name].first = nregisters;
 					auto& stats = results[name].second[std::make_pair(gridDim, blockDim)];
@@ -386,18 +422,27 @@ public :
 				
 				std::cout << ncalls << " x <<<(" << gridDim.x << ", " << gridDim.y << ", " << gridDim.z << "), (" <<
 					blockDim.x << ", " << blockDim.y << ", " << blockDim.z << ")>>> " <<
-					"min = " << min << ", max = " << max << ", avg = " << avg << std::endl;
+					"min = " << min << "ms, max = " << max << "ms, avg = " << avg << "ms" << std::endl;
 			}
 		}
 	}
 };
 
-// TODO must support threads.
-static Timer timer;
+Profiler::Profiler()
+{
+	matcher = new Matcher(funcs);
+	timer = new Timer(funcs);
+}
+
+Profiler::~Profiler()
+{
+	delete matcher;
+	delete timer;
+};
 
 extern "C"
 gpuError_t gpuLaunchKernel(
-	const void* func,
+	const void* f,
 	dim3 gridDim,
 	dim3 blockDim,
 	void** args,
@@ -408,9 +453,10 @@ gpuError_t gpuLaunchKernel(
 	bind_sym(libgpurt, gpuLaunchKernel, gpuError_t,
 		const void*, dim3, dim3, void**, size_t, gpuStream_t);
 
-	gpuError_t result = gpuLaunchKernel_real(func, gridDim, blockDim, args, sharedMem, stream);
-	auto name = funcs[(void*)func].deviceName;
-	if (matcher.isMatching(name))
+	gpuError_t result = gpuLaunchKernel_real(f, gridDim, blockDim, args, sharedMem, stream);
+	auto& func = profiler.funcs[(void*)f];
+	auto name = func->deviceName;
+	if (profiler.matcher->isMatching(name))
 	{
 #if 0
 		LOG("%s<<<(%u, %u, %u), (%u, %u, %u), %zu, %p>>> = %d\n",
@@ -420,9 +466,22 @@ gpuError_t gpuLaunchKernel(
 		// Don't do anything else, if kernel launch was not successful.
 		if (result != gpuSuccess) return result;
 		
-		if (timer.isTiming())
+		if (profiler.timer->isTiming())
 		{
-			timer.measure(name,
+			if (!func->nregs)
+			{ 
+				// Get the kernel register count.
+				struct gpuFuncAttributes attrs;
+				if (gpuFuncGetAttributes(&attrs, (void*)f) != gpuSuccess)
+				{
+					fprintf(stderr, "Could not read the number of registers for function \"%s\"\n", name.c_str());
+					gpuGetLastError();
+				}
+				
+				func->nregs = attrs.numRegs;
+			}
+
+			profiler.timer->measure(func.get(),
 				dim3(gridDim.x, gridDim.y, gridDim.z),
 				dim3(blockDim.x, blockDim.y, blockDim.z),
 				stream);
@@ -442,9 +501,9 @@ gpuError_t gpuStreamSynchronize(
 	gpuError_t result = gpuStreamSynchronize_real(stream);
 	if (result != gpuSuccess) return result;
 		
-	if (timer.isTiming())
+	if (profiler.timer->isTiming())
 	{
-		timer.sync(stream);
+		profiler.timer->sync(stream);
 	}
 	
 	return result;
@@ -459,9 +518,9 @@ gpuError_t gpuDeviceSynchronize()
 	gpuError_t result = gpuDeviceSynchronize_real();
 	if (result != gpuSuccess) return result;
 		
-	if (timer.isTiming())
+	if (profiler.timer->isTiming())
 	{
-		timer.sync();
+		profiler.timer->sync();
 	}
 	
 	return result;

@@ -1,6 +1,3 @@
-[submodule "ThirdParty/superbenchmark"]
-	path = ThirdParty/superbenchmark
-	url = https://github.com/microsoft/superbenchmark.git
 [submodule "ThirdParty/sample"]
 	path = ThirdParty/sample
 	url = https://github.com/dmikushin/bilinear.git
