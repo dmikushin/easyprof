@@ -27,6 +27,9 @@ static const auto gpuSuccess = hipSuccess;
 #define gpuLaunchKernel(...) hipLaunchKernel(__VA_ARGS__)
 #define gpuStreamSynchronize(...) hipStreamSynchronize(__VA_ARGS__)
 #define gpuDeviceSynchronize() hipDeviceSynchronize()
+#define gpuMemcpyKind hipMemcpyKind
+#define gpuMemcpy(...) hipMemcpy(__VA_ARGS__)
+#define gpuMemcpyAsync(...) hipMemcpyAsync(__VA_ARGS__)
 #define LIBGPURT "/opt/rocm/hip/lib/libamdhip64.so"
 #else
 #include <cuda_runtime.h>
@@ -40,6 +43,9 @@ static const auto gpuSuccess = cudaSuccess;
 #define gpuLaunchKernel(...) cudaLaunchKernel(__VA_ARGS__)
 #define gpuStreamSynchronize(...) cudaStreamSynchronize(__VA_ARGS__)
 #define gpuDeviceSynchronize() cudaDeviceSynchronize()
+#define gpuMemcpyKind cudaMemcpyKind
+#define gpuMemcpy(...) cudaMemcpy(__VA_ARGS__)
+#define gpuMemcpyAsync(...) cudaMemcpyAsync(__VA_ARGS__)
 #define LIBGPURT "/usr/local/cuda/lib64/libcudart.so"
 #endif
 
@@ -525,6 +531,40 @@ gpuError_t gpuDeviceSynchronize()
 	bind_sym(libgpurt, gpuDeviceSynchronize, gpuError_t);
 
 	gpuError_t result = gpuDeviceSynchronize_real();
+	if (result != gpuSuccess) return result;
+		
+	if (profiler.timer->isTiming())
+	{
+		profiler.timer->sync();
+	}
+	
+	return result;
+}
+
+extern "C"
+gpuError_t gpuMemcpyAsync(void *dst, const void *src, size_t count, enum gpuMemcpyKind kind, gpuStream_t stream)
+{
+	bind_lib(LIBGPURT, libgpurt);
+	bind_sym(libgpurt, gpuMemcpyAsync, gpuError_t, void*, const void*, size_t, enum gpuMemcpyKind, gpuStream_t);
+
+	gpuError_t result = gpuMemcpyAsync_real(dst, src, count, kind, stream);
+	if (result != gpuSuccess) return result;
+		
+	if (profiler.timer->isTiming())
+	{
+		profiler.timer->sync(stream);
+	}
+	
+	return result;
+}
+
+extern "C"
+gpuError_t gpuMemcpy(void *dst, const void *src, size_t count, enum gpuMemcpyKind kind)
+{
+	bind_lib(LIBGPURT, libgpurt);
+	bind_sym(libgpurt, gpuMemcpy, gpuError_t, void*, const void*, size_t, enum gpuMemcpyKind);
+
+	gpuError_t result = gpuMemcpy_real(dst, src, count, kind);
 	if (result != gpuSuccess) return result;
 		
 	if (profiler.timer->isTiming())
