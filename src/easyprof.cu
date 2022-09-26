@@ -3,6 +3,7 @@
 #include <cxxabi.h>
 #include <dlfcn.h>
 #include <iostream>
+#include <list>
 #include <map>
 #include <memory>
 #include <regex>
@@ -212,6 +213,16 @@ class Timer
 	// execution time.
 	bool synced = false;
 
+	using launches =
+		std::vector<
+			std::tuple<
+				std::chrono::time_point<std::chrono::high_resolution_clock>, // time begin
+				std::chrono::time_point<std::chrono::high_resolution_clock>, // time end
+				dim3, dim3, // gridDim, blockDim
+				int // synchronization group index
+			>
+		>;
+
 	std::map<
 		gpuStream_t, // for each stream
 		std::map<
@@ -219,17 +230,15 @@ class Timer
 			std::tuple<
 				unsigned int, // the number of kernels to sync
 				const GPUfunction*, // the corresponding registered function
-				std::vector<
-					std::tuple<
-						std::chrono::time_point<std::chrono::high_resolution_clock>, // time begin
-						std::chrono::time_point<std::chrono::high_resolution_clock>, // time end
-						dim3, dim3, // gridDim, blockDim
-						int // synchronization group index
-					>
-				>
+				launches, // launches for the current time interval
+				std::shared_ptr<std::list<launches> > // archived launches from the previous live intervals
 			>
 		>
 	> kernels;
+	
+	// Archived launches from the previous live intervals,
+	// which is to be filled by a long-running app with many kernel launches.
+	std::map<GPUfunction*, std::shared_ptr<std::list<launches> > > archive;
 	
 	int sync_group_index = 0;
 	
