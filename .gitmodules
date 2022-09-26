@@ -2,3 +2,6 @@
 	path = ThirdParty/sample
 	url = https://github.com/dmikushin/bilinear.git
 	branch = cuda
+[submodule "ThirdParty/sample2"]
+	path = ThirdParty/sample2
+	url = https://github.com/dmikushin/fluidsGL.git

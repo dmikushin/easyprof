@@ -7,6 +7,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 add_subdirectory(ThirdParty/sample)
+add_subdirectory(ThirdParty/sample2)
 
 include(CheckLanguage)
 
@@ -48,6 +49,10 @@ endif()
 add_custom_target(${PROJECT_NAME}_test
 	COMMAND LD_PRELOAD=$<TARGET_FILE:${${PROJECT_NAME}_target}> PROFILE_TIME=1 $<TARGET_FILE:bilinear_gpu_unoptimized> ${CMAKE_CURRENT_SOURCE_DIR}/ThirdParty/sample/thefox.bmp)
 add_dependencies(${PROJECT_NAME}_test bilinear_gpu_unoptimized)
+
+add_custom_target(${PROJECT_NAME}_test2
+	COMMAND LD_PRELOAD=$<TARGET_FILE:${${PROJECT_NAME}_target}> PROFILE_TIME=1 PROFILE_LIVE=5s $<TARGET_FILE:fluidsGL>)
+add_dependencies(${PROJECT_NAME}_test2 fluidsGL)
 
 # TODO Python frontend
 
