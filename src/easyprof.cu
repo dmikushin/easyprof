@@ -206,7 +206,7 @@ static bool operator<(const dim3& v1, const dim3& v2)
 {
 	auto c1 = reinterpret_cast<const char*>(&v1);
 	auto c2 = reinterpret_cast<const char*>(&v2);
-	return memcmp(c1, c2, sizeof(dim3)) >= 0;
+	return memcmp(c1, c2, sizeof(dim3)) > 0;
 }
 
 class Timer
@@ -383,6 +383,7 @@ public :
 				unsigned int nregisters = func->nregs;
 				
 				const auto& timings = std::get<2>(kernel.second);
+				auto& result = results[name];
 				for (const auto& timing : timings)
 				{
 					const auto& begin = std::get<0>(timing);
@@ -391,8 +392,8 @@ public :
 					const auto& gridDim = std::get<2>(timing);
 					const auto& blockDim = std::get<3>(timing);
 					
-					results[name].first = nregisters;
-					auto& stats = results[name].second[std::make_pair(gridDim, blockDim)];
+					result.first = nregisters;
+					auto& stats = result.second[std::make_pair(gridDim, blockDim)];
 					auto& min = std::get<0>(stats);
 					auto& max = std::get<1>(stats);
 					auto& avg = std::get<2>(stats);
@@ -424,7 +425,7 @@ public :
 			// TODO If the name is long, shorten it to the last part after ::
 			std::cout << name << " (" << nregisters << " registers)" << std::endl;
 			
-			for (auto grid : result.second.second)
+			for (auto& grid : result.second.second)
 			{
 				const dim3& gridDim = grid.first.first;
 				const dim3& blockDim = grid.first.second;
