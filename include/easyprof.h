@@ -73,7 +73,8 @@ extern void* libgpurt;
 #define SystemLibraryPrefix
 #endif
 
-#define str_api_name(name) #name
+#define str_prefix(prefix) #prefix
+#define str_api_name(name, prefix) #prefix #name
 #define api_name(name, prefix) prefix##name
 
 #include <map>

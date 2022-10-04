@@ -1,15 +1,19 @@
 #include "easyprof.h"
 
+#include <cxxabi.h>
 #include <dlfcn.h>
 #include <functional>
 
-#define GPU_FUNC_LAUNCH_BEGIN(prefix, __stream, RetTy, name, ...) \
+#define GPU_FUNC_LAUNCH_BEGIN(prefix, __stream, __function, \
+	__gridDimX, __gridDimY, __gridDimZ, __blockDimX, __blockDimY, __blockDimZ, __sharedMemBytes, \
+	RetTy, name, ...) \
 	extern "C" \
 	RetTy api_name(name, prefix)(__VA_ARGS__) \
 	{ \
 		gpuStream_t __s = static_cast<gpuStream_t>(__stream); \
 		return gpuFuncLaunch<RetTy>( \
-			__dll(str_api_name(prefix)), str_api_name(api_name(name, prefix)), __s,
+			__dll(str_prefix(prefix)), str_api_name(name, prefix), __s, __function, \
+			gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes,
 
 #define GPU_FUNC_LAUNCH_END(...) \
 			__VA_ARGS__); \
@@ -18,21 +22,23 @@
 #if defined(__HIPCC__)
 
 template<typename RetTy, typename... Args>
-RetTy gpuFuncSynchronize(const std::string dll, const std::string name, gpuStream_t stream, Args... args)
+RetTy gpuFuncLaunch(const std::string dll, const std::string name, gpuStream_t stream, CUfunction f, Args... args)
 {
 	void* handle = nullptr;
-	auto it = dlls.find(dll);
-	if (it != dlls.end())
-		handle = it->second;
-	else
 	{
-		handle = dlopen(dll.c_str(), RTLD_NOW | RTLD_GLOBAL);
-		if (!handle)
+		auto it = dlls.find(dll);
+		if (it != dlls.end())
+			handle = it->second;
+		else
 		{
-			LOG("Error loading %s: %s", dll.c_str(), dlerror());
-			abort();
+			handle = dlopen(dll.c_str(), RTLD_NOW | RTLD_GLOBAL);
+			if (!handle)
+			{
+				LOG("Error loading %s: %s", dll.c_str(), dlerror());
+				abort();
+			}
+			dlls.insert(std::make_pair(dll, handle));
 		}
-		dlls.insert(std::make_pair(dll, handle));
 	}
 
 	using Func = RetTy (*)(Args...);
@@ -106,6 +112,8 @@ GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, stream, gpuError_t, gpuModuleLaunchK
 GPU_FUNC_LAUNCH_END(f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ,
 	sharedMemBytes, stream, kernelParams, extra);
 
+#else
+
 struct kernel
 {
 	uint32_t v0;
@@ -166,21 +174,29 @@ struct CUfunc_st
 };
 
 template<typename RetTy, typename... Args>
-RetTy gpuFuncSynchronize(const std::string dll, const std::string name, gpuStream_t stream, Args... args)
+RetTy gpuFuncLaunch(
+	const std::string dll, const std::string sym,
+	gpuStream_t stream, CUfunction f,
+	unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ,
+	unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ,
+	unsigned int sharedMemBytes,
+	Args... args)
 {
 	void* handle = nullptr;
-	auto it = dlls.find(dll);
-	if (it != dlls.end())
-		handle = it->second;
-	else
 	{
-		handle = dlopen(dll.c_str(), RTLD_NOW | RTLD_GLOBAL);
-		if (!handle)
+		auto it = dlls.find(dll);
+		if (it != dlls.end())
+			handle = it->second;
+		else
 		{
-			LOG("Error loading %s: %s", dll.c_str(), dlerror());
-			abort();
+			handle = dlopen(dll.c_str(), RTLD_NOW | RTLD_GLOBAL);
+			if (!handle)
+			{
+				LOG("Error loading %s: %s", dll.c_str(), dlerror());
+				abort();
+			}
+			dlls.insert(std::make_pair(dll, handle));
 		}
-		dlls.insert(std::make_pair(dll, handle));
 	}
 
 	using Func = RetTy (*)(Args...);
@@ -188,10 +204,10 @@ RetTy gpuFuncSynchronize(const std::string dll, const std::string name, gpuStrea
 	static Func funcReal = nullptr;
 	if (!funcReal)
 	{
-		funcReal = (Func)SymbolLoader::get(handle, name.c_str());
+		funcReal = (Func)SymbolLoader::get(handle, sym.c_str());
 		if (!funcReal)
 		{
-			LOG("Error loading %s : %s", name.c_str(), dlerror());
+			LOG("Error loading %s : %s", sym.c_str(), dlerror());
 			abort();
 		}
 	}
@@ -203,17 +219,34 @@ RetTy gpuFuncSynchronize(const std::string dll, const std::string name, gpuStrea
 		gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ,
 		sharedMemBytes, kernelParams);
 #endif
-	auto it = profile.funcs.find(pFunc); // TODO Not pFunc?
-	if (it = profile.funcs.end())
+	auto it = profiler.funcs.find(pFunc); // TODO Not pFunc?
+	if (it == profiler.funcs.end())
 	{
-		it = profile.funcs.insert(std::make_pair(pFunc, func));
+		int status;    
+		char* name = abi::__cxa_demangle(pFunc->name, 0, 0, &status);	
+
+		profiler.funcs[(void*)f] = std::make_shared<GPUfunction>(GPUfunction
+		{
+			/* void* vfatCubinHandle */   pKernel->module,
+			/* const char* hostFun; */    pFunc->name,
+			/* char* deviceFun; */        pFunc->name,
+			/* std::string deviceName; */ status ? pFunc->name : name,
+			/* int thread_limit; */       0, // thread_limit is not known
+			/* uint3 tid; */              dim3 { gridDimX, gridDimY, gridDimZ },
+			/* uint3 bid; */              dim3 { blockDimX, blockDimY, blockDimZ },
+			/* dim3 bDim; */              dim3 { gridDimX, gridDimY, gridDimZ },
+			/* dim3 gDim; */              dim3 { blockDimX, blockDimY, blockDimZ },
+			/* int wSize; */              static_cast<int>(sharedMemBytes),
+			/* int nregs; */              0 // nregs, not available yet
+		});
 	}
 	auto& func = it->second;
 	auto name = func->deviceName;
+	printf("%s\n", name.c_str());
 
 	// Call the real function.
 	auto result = std::invoke(funcReal, args...);
-
+/*
 	// Start profiling the newly-launched kernel.
 	if (profiler.matcher->isMatching(name))
 	{
@@ -246,14 +279,18 @@ RetTy gpuFuncSynchronize(const std::string dll, const std::string name, gpuStrea
 				stream);
 		}
 	}
-
+*/
 	return result;
 }
 
-GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, hStream, gpuError_t, cuLaunchKernel,
+GPU_FUNC_LAUNCH_BEGIN(DriverLibraryPrefix, hStream, f,
+	gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ,
+	sharedMemBytes,
+	CUresult, LaunchKernel,
+	CUfunction f,
 	unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ,
 	unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ,
-	unsigned int sharedMemBytes, CUstream hStream, void** kernelParams, void** extra)ж
+	unsigned int sharedMemBytes, CUstream hStream, void** kernelParams, void** extra)
 GPU_FUNC_LAUNCH_END(f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ,
 	sharedMemBytes, hStream, kernelParams, extra);
 

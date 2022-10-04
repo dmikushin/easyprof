@@ -9,7 +9,7 @@
 	{ \
 		gpuStream_t __s = static_cast<gpuStream_t>(__stream); \
 		return gpuFuncSynchronize<RetTy>( \
-			__dll(str_api_name(prefix)), str_api_name(api_name(name, prefix)), __s,
+			__dll(str_prefix(prefix)), str_api_name(name, prefix), __s,
 
 #define GPU_FUNC_SYNC_END(...) \
 			__VA_ARGS__); \
