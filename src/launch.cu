@@ -173,6 +173,12 @@ struct CUfunc_st
 	struct dummy1 *p3;
 };
 
+static void profilerTimerSync(CUstream hStream, CUresult status, void *userData)
+{
+	if (profiler.timer->isTiming())
+		profiler.timer->sync(hStream);
+}
+
 template<typename RetTy, typename... Args>
 RetTy gpuFuncLaunch(
 	const std::string dll, const std::string sym,
@@ -246,7 +252,7 @@ RetTy gpuFuncLaunch(
 
 	// Call the real function.
 	auto result = std::invoke(funcReal, args...);
-/*
+
 	// Start profiling the newly-launched kernel.
 	if (profiler.matcher->isMatching(name))
 	{
@@ -256,30 +262,31 @@ RetTy gpuFuncLaunch(
 			sharedMem, stream, result);
 #endif	
 		// Don't do anything else, if kernel launch was not successful.
-		if (result != gpuSuccess) return result;
+		if (result != CUDA_SUCCESS) return result;
 		
 		if (profiler.timer->isTiming())
 		{
 			if (!func->nregs)
 			{ 
 				// Get the kernel register count.
-				struct gpuFuncAttributes attrs;
-				if (gpuFuncGetAttributes(&attrs, (void*)f) != gpuSuccess)
+				if (cuFuncGetAttribute(&func->nregs, CU_FUNC_ATTRIBUTE_NUM_REGS, pFunc) != CUDA_SUCCESS)
 				{
 					fprintf(stderr, "Could not read the number of registers for function \"%s\"\n", name.c_str());
 					gpuGetLastError();
 				}
-				
-				func->nregs = attrs.numRegs;
 			}
 
 			profiler.timer->measure(func.get(),
-				dim3(gridDim.x, gridDim.y, gridDim.z),
-				dim3(blockDim.x, blockDim.y, blockDim.z),
+				dim3(gridDimX, gridDimY, gridDimZ),
+				dim3(blockDimX, blockDimY, blockDimZ),
 				stream);
+			
+			// Insert a callback into the same stream after the launch,
+			// in order to have it to stop the time measurement.
+			cuStreamAddCallback(stream, profilerTimerSync, /* userData = */ nullptr, 0);
 		}
 	}
-*/
+
 	return result;
 }
 
