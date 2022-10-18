@@ -40,9 +40,9 @@ endif()
 set(CMAKE_MODULE_PATH "${HIP_PATH}/cmake" ${CMAKE_MODULE_PATH})
 find_package(HIP REQUIRED)
 
-file(GLOB SRCS "src/*.cpp")
+file(GLOB SRCS "src/*.cu")
 add_library(${PROJECT_NAME}_hip SHARED ${SRCS})
-set_source_files_properties(src/${PROJECT_NAME}.cu PROPERTIES LANGUAGE HIP)
+set_source_files_properties(${SRCS} PROPERTIES LANGUAGE HIP)
 target_include_directories(${PROJECT_NAME}_hip PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(${PROJECT_NAME}_hip ${CMAKE_DL_LIBS})
 

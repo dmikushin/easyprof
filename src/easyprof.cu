@@ -33,9 +33,12 @@ std::map<std::string, void*> dlls;
 const char* __dll(const char* prefix)
 {
 	std::string sprefix = prefix;
+#if defined(__CUDACC__)
 	if (sprefix == "cu") return LIBGPU;
 	if (sprefix == "cuda") return LIBGPURT;
+#elif defined(__HIPCC__)
 	if (sprefix == "hip") return LIBGPURT;
+#endif
 	return "";
 }
 
