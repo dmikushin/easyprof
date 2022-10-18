@@ -1,6 +1,7 @@
 #include "easyprof.h"
 
 #include <algorithm>
+#include <assert.h>
 #include <iostream>
 
 static bool operator<(const dim3& v1, const dim3& v2)
@@ -50,7 +51,7 @@ void Timer::measure(const GPUfunction* func_,
 	}
 
 	auto begin = std::chrono::high_resolution_clock::now();
-	std::chrono::time_point<std::chrono::high_resolution_clock> end;
+	std::chrono::time_point<std::chrono::high_resolution_clock> end {};
 
 	if (synced)
 	{
@@ -148,7 +149,11 @@ Timer::~Timer()
 			{
 				const auto& begin = std::get<0>(timing);
 				const auto& end = std::get<1>(timing);
+				std::chrono::time_point<std::chrono::high_resolution_clock> zero {};
+				if (end == zero) continue;
 				auto duration = std::chrono::duration<double, std::micro>{end - begin}.count();
+				if (duration <= 0.0) continue;
+				assert(duration > 0.0);
 				const auto& gridDim = std::get<2>(timing);
 				const auto& blockDim = std::get<3>(timing);
 				
@@ -169,6 +174,9 @@ Timer::~Timer()
 					min = duration;
 					max = duration;
 				}
+				
+				assert(min > 0.0);
+				assert(max > 0.0);
 				
 				avg += duration;
 				ncalls++;
