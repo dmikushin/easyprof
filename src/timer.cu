@@ -34,7 +34,7 @@ Timer::Timer(const std::map<const void*, std::shared_ptr<GPUfunction>>& funcs_) 
 	}
 }
 
-void Timer::measure(const GPUfunction* func_,
+std::tuple<Timer::Launches*, int> Timer::measure(const GPUfunction* func_,
 	const dim3& gridDim, const dim3& blockDim, gpuStream_t stream)
 {
 	auto& kernel = kernels[stream][func_->deviceName];
@@ -50,8 +50,7 @@ void Timer::measure(const GPUfunction* func_,
 		launches.reserve(launches.size() + 1024 * 1024);
 	}
 
-	auto begin = std::chrono::high_resolution_clock::now();
-	std::chrono::time_point<std::chrono::high_resolution_clock> end {};
+	std::chrono::time_point<std::chrono::high_resolution_clock> begin, end {};
 
 	if (synced)
 	{
@@ -70,7 +69,28 @@ void Timer::measure(const GPUfunction* func_,
 		to_sync++;
 	}
 	
-	launches.push_back(std::make_tuple(begin, end, gridDim, blockDim, 0));
+	launches.emplace_back(std::make_tuple(begin, end, gridDim, blockDim, 0));
+	return std::make_tuple(&launches, launches.size() - 1);
+}
+
+void Timer::start(gpuStream_t stream, std::tuple<Timer::Launches*, int>& launch)
+{
+	auto& launches = *std::get<0>(launch);
+	auto& i = std::get<1>(launch);
+	
+	auto begin = std::chrono::high_resolution_clock::now();
+	std::get<0>(launches[i]) = begin;
+}
+
+void Timer::stop(gpuStream_t stream, std::tuple<Timer::Launches*, int>& launch)
+{
+	auto& launches = *std::get<0>(launch);
+	auto& i = std::get<1>(launch);
+	
+	auto end = std::chrono::high_resolution_clock::now();
+	std::get<1>(launches[i]) = end;
+
+	sync(stream);
 }
 
 void Timer::sync(gpuStream_t stream)

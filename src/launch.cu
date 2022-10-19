@@ -1,3 +1,7 @@
+// TODO 1) Callback before launch, same as after launch, which sets the starting timestamp
+// TODO 2) Different socket PORT numbers for HIP (2485) and CUDA (2788)
+// TODO 3) FREEZE_ON_START=1 env variable to wait for a start command in socket
+
 #include "easyprof.h"
 
 #include <cxxabi.h>
@@ -21,13 +25,29 @@
 // stream reaches the point of interest. We use this feature to track kernels
 // execution in a simple way.
 #ifdef __HIPCC__
-static void profilerTimerSync(hipStream_t stream, hipError_t status, void *userData)
+static void profilerStartTimer(hipStream_t stream, hipError_t status, void *userData)
 #else
-static void profilerTimerSync(CUstream stream, CUresult status, void *userData)
+static void profilerStartTimer(CUstream stream, CUresult status, void *userData)
 #endif
 {
+	auto launch = *reinterpret_cast<std::tuple<Timer::Launches*, int>*>(userData);
+
 	if (Profiler::get().timer->isTiming())
-		Profiler::get().timer->sync(stream);
+		Profiler::get().timer->start(stream, launch);
+}
+
+#ifdef __HIPCC__
+static void profilerStopTimer(hipStream_t stream, hipError_t status, void *userData)
+#else
+static void profilerStopTimer(CUstream stream, CUresult status, void *userData)
+#endif
+{
+	auto launch = reinterpret_cast<std::tuple<Timer::Launches*, int>*>(userData);
+
+	if (Profiler::get().timer->isTiming())
+		Profiler::get().timer->stop(stream, *launch);
+	
+	delete launch;
 }
 
 // This is a reverse-engineering of some internal CUDA structures,
@@ -182,17 +202,24 @@ RetTy gpuFuncLaunch(const std::string dll, const std::string sym, gpuStream_t st
 		
 		if (Profiler::get().timer->isTiming())
 		{
-			Profiler::get().timer->measure(func.get(),
+			auto record_ = Profiler::get().timer->measure(func.get(),
 				dim3(gridDimX, gridDimY, gridDimZ),
 				dim3(blockDimX, blockDimY, blockDimZ),
 				stream);
-#ifdef __CUDACC__			
-			// Insert a callback into the same stream after the launch,
-			// in order to have it to stop the time measurement.
-			auto err = cuStreamAddCallback(stream, profilerTimerSync, /* userData = */ nullptr, 0);
+
+			// XXX This IS horrible, but we are in the rush on developing bad code, right?
+			auto record = new decltype(record_);
+			*record = record_;
+
+			// Insert a callback into the same stream before and after the launch,
+			// in order to have the time measurement started and stopped.
+#ifdef __CUDACC__
+			auto err = cuStreamAddCallback(stream, profilerStartTimer, /* userData = */ record, 0);
+			err = cuStreamAddCallback(stream, profilerStopTimer, /* userData = */ record, 0);
 #else
 			// in order to have it to stop the time measurement.
-			auto err = hipStreamAddCallback(stream, profilerTimerSync, /* userData = */ nullptr, 0);
+			auto err = hipStreamAddCallback(stream, profilerStartTimer, /* userData = */ record, 0);
+			err = hipStreamAddCallback(stream, profilerStopTimer, /* userData = */ record, 0);
 #endif
 		}
 	}

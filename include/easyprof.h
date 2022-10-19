@@ -160,6 +160,20 @@ public :
 
 class Timer
 {
+public :
+
+	using Launch =
+		std::tuple<
+			std::chrono::time_point<std::chrono::high_resolution_clock>, // time begin
+			std::chrono::time_point<std::chrono::high_resolution_clock>, // time end
+			dim3, dim3, // gridDim, blockDim
+			int // synchronization group index
+		>;
+
+	using Launches = std::vector<Launch>;
+
+private :
+
 	const std::map<const void*, std::shared_ptr<GPUfunction>>& funcs;
 
 	bool timing = false;
@@ -168,16 +182,6 @@ class Timer
 	// execution time.
 	bool synced = false;
 
-	using launches =
-		std::vector<
-			std::tuple<
-				std::chrono::time_point<std::chrono::high_resolution_clock>, // time begin
-				std::chrono::time_point<std::chrono::high_resolution_clock>, // time end
-				dim3, dim3, // gridDim, blockDim
-				int // synchronization group index
-			>
-		>;
-
 	std::map<
 		gpuStream_t, // for each stream
 		std::map<
@@ -185,15 +189,15 @@ class Timer
 			std::tuple<
 				unsigned int, // the number of kernels to sync
 				const GPUfunction*, // the corresponding registered function
-				launches, // launches for the current time interval
-				std::shared_ptr<std::list<launches> > // archived launches from the previous live intervals
+				Launches, // launches for the current time interval
+				std::shared_ptr<std::list<Launches> > // archived launches from the previous live intervals
 			>
 		>
 	> kernels;
 	
 	// Archived launches from the previous live intervals,
 	// which is to be filled by a long-running app with many kernel launches.
-	std::map<GPUfunction*, std::shared_ptr<std::list<launches> > > archive;
+	std::map<GPUfunction*, std::shared_ptr<std::list<Launches> > > archive;
 	
 	int sync_group_index = 0;
 	
@@ -203,8 +207,12 @@ public :
 	
 	Timer(const std::map<const void*, std::shared_ptr<GPUfunction>>& funcs_) ;
 
-	void measure(const GPUfunction* func_,
+	std::tuple<Launches*, int> measure(const GPUfunction* func,
 		const dim3& gridDim, const dim3& blockDim, gpuStream_t stream);
+
+	void start(gpuStream_t stream, std::tuple<Launches*, int>& launch);
+
+	void stop(gpuStream_t stream, std::tuple<Launches*, int>& launch);
 
 	void sync(gpuStream_t stream);
 	
