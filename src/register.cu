@@ -1,3 +1,4 @@
+#if 0
 #include "easyprof.h"
 
 #include <cxxabi.h>
@@ -59,22 +60,26 @@ void __gpuRegisterFunction(
 	__gpuRegisterFunction_real(
 		vfatCubinHandle, hostFun, deviceFun, deviceName,
 		thread_limit, tid, bid, bDim, gDim, wSize);
-#if 0
-#define VAL_OR_NIL(ptr, prop) (ptr ? ((ptr)->prop) : 0)
-	LOG("__gpuRegisterFunction(\"%s\", %p, %p, %p, %d, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %u, %d)\n",
-		deviceName, vfatCubinHandle, hostFun, deviceFun, thread_limit,
-		VAL_OR_NIL(tid, x), VAL_OR_NIL(tid, y), VAL_OR_NIL(tid, z),
-		VAL_OR_NIL(bid, x), VAL_OR_NIL(bid, y), VAL_OR_NIL(bid, z),
-		VAL_OR_NIL(bDim, x), VAL_OR_NIL(bDim, y), VAL_OR_NIL(bDim, z),
-		VAL_OR_NIL(gDim, x), VAL_OR_NIL(gDim, y), VAL_OR_NIL(gDim, z),
-		wSize ? *wSize : 0);
-#endif
+
 	int status;    
 	char* name = abi::__cxa_demangle(deviceName, 0, 0, &status);
 
 	auto uint3zero = uint3{};
 	auto dim3zero = dim3{};
-	profiler.funcs[(void*)hostFun] = std::make_shared<GPUfunction>(GPUfunction
+#if 0	
+	cuInit(0);
+	CUmodule m;
+	if (cuModuleLoadFatBinary(&m, vfatCubinHandle) != CUDA_SUCCESS)
+	{
+		fprintf(stderr, "Error in cuModuleLoad\n");
+	}
+	CUfunction f;
+	if (cuModuleGetFunction(&f, m, deviceName) != CUDA_SUCCESS)
+	{
+		fprintf(stderr, "Error in cuModuleGetFunction\n");
+	}
+#endif	
+	Profiler::get().funcs[(void*)hostFun] = std::make_shared<GPUfunction>(GPUfunction
 	{
 		vfatCubinHandle,
 		hostFun,
@@ -89,4 +94,5 @@ void __gpuRegisterFunction(
 		0 // nregs, not available yet
 	});
 }
+#endif
 

@@ -14,8 +14,6 @@ void* libdl = nullptr;
 void* libgpu = nullptr;
 void* libgpurt = nullptr;
 
-Profiler profiler;
-
 Profiler::Profiler()
 {
 	matcher = new Matcher(funcs);
@@ -27,6 +25,12 @@ Profiler::~Profiler()
 	delete matcher;
 	delete timer;
 };
+
+Profiler& Profiler::get()
+{
+	static Profiler profiler;
+	return profiler;
+}
 
 std::map<std::string, void*> dlls;
 

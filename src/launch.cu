@@ -23,8 +23,8 @@
 
 static void hipProfilerTimerSync(hipStream_t stream, hipError_t status, void *userData)
 {
-	if (profiler.timer->isTiming())
-		profiler.timer->sync(stream);
+	if (Profiler::get().timer->isTiming())
+		Profiler::get().timer->sync(stream);
 }
 
 template<typename RetTy, typename Function, typename... Args>
@@ -63,14 +63,14 @@ RetTy gpuFuncLaunch(const std::string dll, const std::string sym, gpuStream_t st
 		}
 	}
 
-	auto& func = profiler.funcs[(void*)f];
+	auto& func = Profiler::get().funcs[(void*)f];
 	auto name = func->deviceName;
 
 	// Call the real function.
 	auto result = std::invoke(funcReal, args...);
 
 	// Start profiling the newly-launched kernel.
-	if (profiler.matcher->isMatching(name))
+	if (Profiler::get().matcher->isMatching(name))
 	{
 #if 0
 		LOG("%s<<<(%u, %u, %u), (%u, %u, %u), %zu, %p>>> = %d\n",
@@ -80,7 +80,7 @@ RetTy gpuFuncLaunch(const std::string dll, const std::string sym, gpuStream_t st
 		// Don't do anything else, if kernel launch was not successful.
 		if (result != gpuSuccess) return result;
 		
-		if (profiler.timer->isTiming())
+		if (Profiler::get().timer->isTiming())
 		{
 			if (!func->nregs)
 			{ 
@@ -95,7 +95,7 @@ RetTy gpuFuncLaunch(const std::string dll, const std::string sym, gpuStream_t st
 				func->nregs = attrs.numRegs;
 			}
 
-			profiler.timer->measure(func.get(),
+			Profiler::get().timer->measure(func.get(),
 				dim3(gridDimX, gridDimY, gridDimZ),
 				dim3(blockDimX, blockDimY, blockDimZ),
 				stream);
@@ -130,8 +130,7 @@ GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, stream, f,
 	unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ, unsigned int sharedMemBytes,
 	gpuStream_t stream, void** kernelParams, void** extra)
 GPU_FUNC_LAUNCH_END(gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes,
-	f, gridDimX, gridDimY, gridDimZ,
-	blockDimX, blockDimY, blockDimZ,
+	f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes,
 	stream, kernelParams, extra);
 
 #else
@@ -197,8 +196,8 @@ struct CUfunc_st
 
 static void cudaProfilerTimerSync(CUstream hStream, CUresult status, void *userData)
 {
-	if (profiler.timer->isTiming())
-		profiler.timer->sync(hStream);
+	if (Profiler::get().timer->isTiming())
+		Profiler::get().timer->sync(hStream);
 }
 
 template<typename RetTy, typename... Args>
@@ -242,18 +241,14 @@ RetTy gpuFuncLaunch(
 
 	struct CUfunc_st *pFunc = (struct CUfunc_st *)f;
 	struct kernel *pKernel = pFunc->kernel;
-#if 0
-	wrapper.addKernel(pFunc->name, pKernel->module,
-		gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ,
-		sharedMemBytes, kernelParams);
-#endif
-	auto it = profiler.funcs.find(pFunc); // TODO Not pFunc?
-	if (it == profiler.funcs.end())
+	auto it = Profiler::get().funcs.find(pFunc); // TODO Not pFunc?
+	if (it == Profiler::get().funcs.end())
 	{
 		int status;    
 		char* name = abi::__cxa_demangle(pFunc->name, 0, 0, &status);	
 
-		profiler.funcs[(void*)f] = std::make_shared<GPUfunction>(GPUfunction
+		auto result = Profiler::get().funcs.emplace((void*)f,
+			std::make_shared<GPUfunction>(GPUfunction
 		{
 			/* void* vfatCubinHandle */   pKernel->module,
 			/* const char* hostFun; */    pFunc->name,
@@ -266,7 +261,9 @@ RetTy gpuFuncLaunch(
 			/* dim3 gDim; */              dim3 { blockDimX, blockDimY, blockDimZ },
 			/* int wSize; */              static_cast<int>(sharedMemBytes),
 			/* int nregs; */              0 // nregs, not available yet
-		});
+		}));
+
+		it = result.first;
 	}
 	auto& func = it->second;
 	auto name = func->deviceName;
@@ -276,7 +273,7 @@ RetTy gpuFuncLaunch(
 	auto result = std::invoke(funcReal, args...);
 
 	// Start profiling the newly-launched kernel.
-	if (profiler.matcher->isMatching(name))
+	if (Profiler::get().matcher->isMatching(name))
 	{
 #if 0
 		LOG("%s<<<(%u, %u, %u), (%u, %u, %u), %zu, %p>>> = %d\n",
@@ -286,7 +283,7 @@ RetTy gpuFuncLaunch(
 		// Don't do anything else, if kernel launch was not successful.
 		if (result != CUDA_SUCCESS) return result;
 		
-		if (profiler.timer->isTiming())
+		if (Profiler::get().timer->isTiming())
 		{
 			if (!func->nregs)
 			{ 
@@ -298,7 +295,7 @@ RetTy gpuFuncLaunch(
 				}
 			}
 
-			profiler.timer->measure(func.get(),
+			Profiler::get().timer->measure(func.get(),
 				dim3(gridDimX, gridDimY, gridDimZ),
 				dim3(blockDimX, blockDimY, blockDimZ),
 				stream);
@@ -313,15 +310,13 @@ RetTy gpuFuncLaunch(
 }
 
 GPU_FUNC_LAUNCH_BEGIN(DriverLibraryPrefix, hStream, f,
-	gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ,
-	sharedMemBytes,
 	CUresult, LaunchKernel,
 	CUfunction f,
 	unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ,
 	unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ,
 	unsigned int sharedMemBytes, CUstream hStream, void** kernelParams, void** extra)
-GPU_FUNC_LAUNCH_END(gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ,
-	sharedMemBytes, hStream, kernelParams, extra);
+GPU_FUNC_LAUNCH_END(gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes,
+	f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes, hStream, kernelParams, extra);
 
 #endif
 

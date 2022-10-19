@@ -129,20 +129,27 @@ class Matcher;
 class Timer;
 
 // Maintaining the proper order of destruction.
-struct Profiler
+class Profiler
 {
+	Profiler();
+
+public :
+
+	~Profiler();
+	
+	Profiler(const Profiler&) = delete;
+
+	Profiler& operator=(const Profiler&) = delete;
+
+	static Profiler& get();
+
 	std::map<void*, std::shared_ptr<GPUfunction>> funcs;
 
 	Matcher* matcher;
 
 	// TODO must support threads.
 	Timer* timer;
-	
-	Profiler();
-	~Profiler();
 };
-
-extern Profiler profiler;
 
 class Matcher
 {
