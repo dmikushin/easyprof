@@ -112,16 +112,10 @@ extern std::vector<GPUapiFunc> gpuAPI;
 
 struct GPUfunction
 {
-	void* vfatCubinHandle;
-	const char* hostFun;
-	char* deviceFun;
 	std::string deviceName;
-	int thread_limit;
-	uint3 tid;
-	uint3 bid;
-	dim3 bDim;
-	dim3 gDim;
-	int wSize;
+	void* deviceFun;
+	void* module;
+	unsigned int sharedMemBytes;
 	int nregs;
 };
 

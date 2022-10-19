@@ -241,30 +241,34 @@ RetTy gpuFuncLaunch(
 
 	struct CUfunc_st *pFunc = (struct CUfunc_st *)f;
 	struct kernel *pKernel = pFunc->kernel;
-	auto it = Profiler::get().funcs.find(pFunc); // TODO Not pFunc?
+	auto it = Profiler::get().funcs.find(f);
 	if (it == Profiler::get().funcs.end())
 	{
 		int status;    
 		char* name = abi::__cxa_demangle(pFunc->name, 0, 0, &status);	
+		auto deviceName = status ? pFunc->name : name;
+
+		// Get the kernel register count.
+		int nregs = 0;
+		if (cuFuncGetAttribute(&nregs, CU_FUNC_ATTRIBUTE_NUM_REGS, pFunc) != CUDA_SUCCESS)
+		{
+			fprintf(stderr, "Could not read the number of registers for function \"%s\"\n", deviceName);
+			auto err = gpuGetLastError();
+		}
 
 		auto result = Profiler::get().funcs.emplace((void*)f,
 			std::make_shared<GPUfunction>(GPUfunction
 		{
-			/* void* vfatCubinHandle */   pKernel->module,
-			/* const char* hostFun; */    pFunc->name,
-			/* char* deviceFun; */        pFunc->name,
-			/* std::string deviceName; */ status ? pFunc->name : name,
-			/* int thread_limit; */       0, // thread_limit is not known
-			/* uint3 tid; */              dim3 { gridDimX, gridDimY, gridDimZ },
-			/* uint3 bid; */              dim3 { blockDimX, blockDimY, blockDimZ },
-			/* dim3 bDim; */              dim3 { gridDimX, gridDimY, gridDimZ },
-			/* dim3 gDim; */              dim3 { blockDimX, blockDimY, blockDimZ },
-			/* int wSize; */              static_cast<int>(sharedMemBytes),
-			/* int nregs; */              0 // nregs, not available yet
+			/* std::string deviceName; */      deviceName,
+			/* char* deviceFun; */             f,
+			/* void* module */                 pKernel->module,
+			/* unsigned int sharedMemBytes; */ sharedMemBytes,
+			/* int nregs; */                   nregs
 		}));
 
 		it = result.first;
 	}
+
 	auto& func = it->second;
 	auto name = func->deviceName;
 	printf("%s\n", name.c_str());
@@ -285,16 +289,6 @@ RetTy gpuFuncLaunch(
 		
 		if (Profiler::get().timer->isTiming())
 		{
-			if (!func->nregs)
-			{ 
-				// Get the kernel register count.
-				if (cuFuncGetAttribute(&func->nregs, CU_FUNC_ATTRIBUTE_NUM_REGS, pFunc) != CUDA_SUCCESS)
-				{
-					fprintf(stderr, "Could not read the number of registers for function \"%s\"\n", name.c_str());
-					gpuGetLastError();
-				}
-			}
-
 			Profiler::get().timer->measure(func.get(),
 				dim3(gridDimX, gridDimY, gridDimZ),
 				dim3(blockDimX, blockDimY, blockDimZ),
