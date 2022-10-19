@@ -13,7 +13,7 @@ static bool operator<(const dim3& v1, const dim3& v2)
 
 bool Timer::isTiming() { return timing; }
 
-Timer::Timer(const std::map<void*, std::shared_ptr<GPUfunction>>& funcs_) : funcs(funcs_)
+Timer::Timer(const std::map<const void*, std::shared_ptr<GPUfunction>>& funcs_) : funcs(funcs_)
 {
 	const char* ctiming = getenv("PROFILE_TIME");
 	if (ctiming)

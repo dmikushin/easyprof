@@ -30,8 +30,6 @@ static void profilerTimerSync(CUstream stream, CUresult status, void *userData)
 		Profiler::get().timer->sync(stream);
 }
 
-#ifdef __CUDACC__
-
 // This is a reverse-engineering of some internal CUDA structures,
 // in order to reach out some data, most importantly to the kernel name.
 
@@ -94,8 +92,6 @@ struct CUfunc_st
 	struct dummy1 *p3;
 };
 
-#endif
-
 template<typename RetTy, typename Function, typename... Args>
 RetTy gpuFuncLaunch(const std::string dll, const std::string sym, gpuStream_t stream, Function f,
 	unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ,
@@ -132,19 +128,18 @@ RetTy gpuFuncLaunch(const std::string dll, const std::string sym, gpuStream_t st
 		}
 	}
 
-	auto it = Profiler::get().funcs.find(f);
+	auto it = Profiler::get().funcs.find(reinterpret_cast<const void*>(f));
 	if (it == Profiler::get().funcs.end())
 	{
-#ifdef __CUDACC__
 		struct CUfunc_st *pFunc = (struct CUfunc_st *)f;
 		struct kernel *pKernel = pFunc->kernel;
-#else
-		// TODO
-#endif
+#ifdef __CUDACC__
 		int status;    
 		char* name = abi::__cxa_demangle(pFunc->name, 0, 0, &status);	
 		auto deviceName = status ? pFunc->name : name;
-
+#else
+		const char* deviceName = "(unknown)";
+#endif
 		// Get the kernel register count.
 		int nregs = 0;
 #ifdef __CUDACC__
@@ -157,16 +152,24 @@ RetTy gpuFuncLaunch(const std::string dll, const std::string sym, gpuStream_t st
 		struct gpuFuncAttributes attrs;
 		if (gpuFuncGetAttributes(&attrs, (void*)f) != gpuSuccess)
 		{
-			fprintf(stderr, "Could not read the number of registers for function \"%s\"\n", name.c_str());
+			fprintf(stderr, "Could not read the number of registers for function \"%s\"\n", deviceName);
 			auto err = gpuGetLastError();
 		}
+		else
+		{
+			nregs = attrs.numRegs;
+		}
 #endif
-		auto result = Profiler::get().funcs.emplace((void*)f,
+		auto result = Profiler::get().funcs.emplace(reinterpret_cast<const void*>(f),
 			std::make_shared<GPUfunction>(GPUfunction
 		{
 			/* std::string deviceName; */      deviceName,
 			/* char* deviceFun; */             f,
+#ifdef __CUDACC__
 			/* void* module */                 pKernel->module,
+#else
+			/* void* module */                 nullptr,
+#endif
 			/* unsigned int sharedMemBytes; */ sharedMemBytes,
 			/* int nregs; */                   nregs
 		}));
@@ -195,10 +198,10 @@ RetTy gpuFuncLaunch(const std::string dll, const std::string sym, gpuStream_t st
 #ifdef __CUDACC__			
 			// Insert a callback into the same stream after the launch,
 			// in order to have it to stop the time measurement.
-			cuStreamAddCallback(stream, profilerTimerSync, /* userData = */ nullptr, 0);
+			auto err = cuStreamAddCallback(stream, profilerTimerSync, /* userData = */ nullptr, 0);
 #else
 			// in order to have it to stop the time measurement.
-			hipStreamAddCallback(stream, profilerTimerSync, /* userData = */ nullptr, 0);
+			auto err = hipStreamAddCallback(stream, profilerTimerSync, /* userData = */ nullptr, 0);
 #endif
 		}
 	}

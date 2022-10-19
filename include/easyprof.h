@@ -113,7 +113,7 @@ extern std::vector<GPUapiFunc> gpuAPI;
 struct GPUfunction
 {
 	std::string deviceName;
-	void* deviceFun;
+	const void* deviceFun;
 	void* module;
 	unsigned int sharedMemBytes;
 	int nregs;
@@ -137,7 +137,7 @@ public :
 
 	static Profiler& get();
 
-	std::map<void*, std::shared_ptr<GPUfunction>> funcs;
+	std::map<const void*, std::shared_ptr<GPUfunction>> funcs;
 
 	Matcher* matcher;
 
@@ -147,7 +147,7 @@ public :
 
 class Matcher
 {
-	const std::map<void*, std::shared_ptr<GPUfunction>>& funcs;
+	const std::map<const void*, std::shared_ptr<GPUfunction>>& funcs;
 
 	std::string pattern;
 
@@ -155,12 +155,12 @@ public :
 
 	bool isMatching(const std::string& name);
 
-	Matcher(const std::map<void*, std::shared_ptr<GPUfunction>>& funcs_);
+	Matcher(const std::map<const void*, std::shared_ptr<GPUfunction>>& funcs_);
 };
 
 class Timer
 {
-	const std::map<void*, std::shared_ptr<GPUfunction>>& funcs;
+	const std::map<const void*, std::shared_ptr<GPUfunction>>& funcs;
 
 	bool timing = false;
 	
@@ -201,7 +201,7 @@ public :
 
 	bool isTiming();
 	
-	Timer(const std::map<void*, std::shared_ptr<GPUfunction>>& funcs_) ;
+	Timer(const std::map<const void*, std::shared_ptr<GPUfunction>>& funcs_) ;
 
 	void measure(const GPUfunction* func_,
 		const dim3& gridDim, const dim3& blockDim, gpuStream_t stream);
