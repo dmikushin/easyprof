@@ -1,5 +1,3 @@
-// https://github.com/ROCmSoftwarePlatform/EasyProf
-
 #include "easyprof.h"
 
 #include <cxxabi.h>
@@ -19,121 +17,23 @@
 			__VA_ARGS__); \
 	}
 
-#if defined(__HIPCC__)
-
-static void hipProfilerTimerSync(hipStream_t stream, hipError_t status, void *userData)
+// CUDA/HIP APIs can execute a user callback function, when the corresponding
+// stream reaches the point of interest. We use this feature to track kernels
+// execution in a simple way.
+#ifdef __HIPCC__
+static void profilerTimerSync(hipStream_t stream, hipError_t status, void *userData)
+#else
+static void profilerTimerSync(CUstream stream, CUresult status, void *userData)
+#endif
 {
 	if (Profiler::get().timer->isTiming())
 		Profiler::get().timer->sync(stream);
 }
 
-template<typename RetTy, typename Function, typename... Args>
-RetTy gpuFuncLaunch(const std::string dll, const std::string sym, gpuStream_t stream, Function f,
-	unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ,
-	unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ,
-	unsigned int sharedMemBytes, Args... args)
-{
-	void* handle = nullptr;
-	{
-		auto it = dlls.find(dll);
-		if (it != dlls.end())
-			handle = it->second;
-		else
-		{
-			handle = dlopen(dll.c_str(), RTLD_NOW | RTLD_GLOBAL);
-			if (!handle)
-			{
-				LOG("Error loading %s: %s", dll.c_str(), dlerror());
-				abort();
-			}
-			dlls.insert(std::make_pair(dll, handle));
-		}
-	}
+#ifdef __CUDACC__
 
-	using Func = RetTy (*)(Args...);
-	
-	static Func funcReal = nullptr;
-	if (!funcReal)
-	{
-		funcReal = (Func)SymbolLoader::get(handle, sym.c_str());
-		if (!funcReal)
-		{
-			LOG("Error loading %s : %s", sym.c_str(), dlerror());
-			abort();
-		}
-	}
-
-	auto& func = Profiler::get().funcs[(void*)f];
-	auto name = func->deviceName;
-
-	// Call the real function.
-	auto result = std::invoke(funcReal, args...);
-
-	// Start profiling the newly-launched kernel.
-	if (Profiler::get().matcher->isMatching(name))
-	{
-#if 0
-		LOG("%s<<<(%u, %u, %u), (%u, %u, %u), %zu, %p>>> = %d\n",
-			name.c_str(), gridDim.x, gridDim.y, gridDim.z, blockDim.x, blockDim.y, blockDim.z,
-			sharedMemBytes, stream, result);
-#endif	
-		// Don't do anything else, if kernel launch was not successful.
-		if (result != gpuSuccess) return result;
-		
-		if (Profiler::get().timer->isTiming())
-		{
-			if (!func->nregs)
-			{ 
-				// Get the kernel register count.
-				struct gpuFuncAttributes attrs;
-				if (gpuFuncGetAttributes(&attrs, (void*)f) != gpuSuccess)
-				{
-					fprintf(stderr, "Could not read the number of registers for function \"%s\"\n", name.c_str());
-					auto err = gpuGetLastError();
-				}
-				
-				func->nregs = attrs.numRegs;
-			}
-
-			Profiler::get().timer->measure(func.get(),
-				dim3(gridDimX, gridDimY, gridDimZ),
-				dim3(blockDimX, blockDimY, blockDimZ),
-				stream);
-
-			// Insert a callback into the same stream after the launch,
-			// in order to have it to stop the time measurement.
-			hipStreamAddCallback(stream, hipProfilerTimerSync, /* userData = */ nullptr, 0);
-		}
-	}
-
-	return result;
-}
-
-GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, stream, f,
-	gpuError_t, LaunchKernel,
-	const void* f, dim3 numBlocks, dim3 dimBlocks, void** args, size_t sharedMemBytes, gpuStream_t stream)
-GPU_FUNC_LAUNCH_END(numBlocks.x, numBlocks.y, numBlocks.z,
-	dimBlocks.x, dimBlocks.y, dimBlocks.z, sharedMemBytes,
-	f, numBlocks, dimBlocks, args, sharedMemBytes, stream);
-
-GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, stream, f,
-	gpuError_t, ExtLaunchKernel,
-	const void* f, dim3 numBlocks, dim3 dimBlocks, void** args, size_t sharedMemBytes, gpuStream_t stream,
-	gpuEvent_t startEvent, gpuEvent_t stopEvent, int flags)
-GPU_FUNC_LAUNCH_END(numBlocks.x, numBlocks.y, numBlocks.z,
-	dimBlocks.x, dimBlocks.y, dimBlocks.z, sharedMemBytes,
-	f, numBlocks, dimBlocks, args, sharedMemBytes, stream, startEvent, stopEvent, flags);
-
-GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, stream, f,
-	gpuError_t, ModuleLaunchKernel,
-	gpuFunction_t f, unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ,
-	unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ, unsigned int sharedMemBytes,
-	gpuStream_t stream, void** kernelParams, void** extra)
-GPU_FUNC_LAUNCH_END(gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes,
-	f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes,
-	stream, kernelParams, extra);
-
-#else
+// This is a reverse-engineering of some internal CUDA structures,
+// in order to reach out some data, most importantly to the kernel name.
 
 struct kernel
 {
@@ -194,20 +94,13 @@ struct CUfunc_st
 	struct dummy1 *p3;
 };
 
-static void cudaProfilerTimerSync(CUstream hStream, CUresult status, void *userData)
-{
-	if (Profiler::get().timer->isTiming())
-		Profiler::get().timer->sync(hStream);
-}
+#endif
 
-template<typename RetTy, typename... Args>
-RetTy gpuFuncLaunch(
-	const std::string dll, const std::string sym,
-	gpuStream_t stream, CUfunction f,
+template<typename RetTy, typename Function, typename... Args>
+RetTy gpuFuncLaunch(const std::string dll, const std::string sym, gpuStream_t stream, Function f,
 	unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ,
 	unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ,
-	unsigned int sharedMemBytes,
-	Args... args)
+	unsigned int sharedMemBytes, Args... args)
 {
 	void* handle = nullptr;
 	{
@@ -239,23 +132,35 @@ RetTy gpuFuncLaunch(
 		}
 	}
 
-	struct CUfunc_st *pFunc = (struct CUfunc_st *)f;
-	struct kernel *pKernel = pFunc->kernel;
 	auto it = Profiler::get().funcs.find(f);
 	if (it == Profiler::get().funcs.end())
 	{
+#ifdef __CUDACC__
+		struct CUfunc_st *pFunc = (struct CUfunc_st *)f;
+		struct kernel *pKernel = pFunc->kernel;
+#else
+		// TODO
+#endif
 		int status;    
 		char* name = abi::__cxa_demangle(pFunc->name, 0, 0, &status);	
 		auto deviceName = status ? pFunc->name : name;
 
 		// Get the kernel register count.
 		int nregs = 0;
+#ifdef __CUDACC__
 		if (cuFuncGetAttribute(&nregs, CU_FUNC_ATTRIBUTE_NUM_REGS, pFunc) != CUDA_SUCCESS)
 		{
 			fprintf(stderr, "Could not read the number of registers for function \"%s\"\n", deviceName);
 			auto err = gpuGetLastError();
 		}
-
+#else
+		struct gpuFuncAttributes attrs;
+		if (gpuFuncGetAttributes(&attrs, (void*)f) != gpuSuccess)
+		{
+			fprintf(stderr, "Could not read the number of registers for function \"%s\"\n", name.c_str());
+			auto err = gpuGetLastError();
+		}
+#endif
 		auto result = Profiler::get().funcs.emplace((void*)f,
 			std::make_shared<GPUfunction>(GPUfunction
 		{
@@ -269,21 +174,15 @@ RetTy gpuFuncLaunch(
 		it = result.first;
 	}
 
-	auto& func = it->second;
-	auto name = func->deviceName;
-	printf("%s\n", name.c_str());
-
 	// Call the real function.
 	auto result = std::invoke(funcReal, args...);
+
+	auto& func = it->second;
+	auto& name = func->deviceName;
 
 	// Start profiling the newly-launched kernel.
 	if (Profiler::get().matcher->isMatching(name))
 	{
-#if 0
-		LOG("%s<<<(%u, %u, %u), (%u, %u, %u), %zu, %p>>> = %d\n",
-			name.c_str(), gridDim.x, gridDim.y, gridDim.z, blockDim.x, blockDim.y, blockDim.z,
-			sharedMemBytes, stream, result);
-#endif	
 		// Don't do anything else, if kernel launch was not successful.
 		if (result != CUDA_SUCCESS) return result;
 		
@@ -293,15 +192,52 @@ RetTy gpuFuncLaunch(
 				dim3(gridDimX, gridDimY, gridDimZ),
 				dim3(blockDimX, blockDimY, blockDimZ),
 				stream);
-			
+#ifdef __CUDACC__			
 			// Insert a callback into the same stream after the launch,
 			// in order to have it to stop the time measurement.
-			cuStreamAddCallback(stream, cudaProfilerTimerSync, /* userData = */ nullptr, 0);
+			cuStreamAddCallback(stream, profilerTimerSync, /* userData = */ nullptr, 0);
+#else
+			// in order to have it to stop the time measurement.
+			hipStreamAddCallback(stream, profilerTimerSync, /* userData = */ nullptr, 0);
+#endif
 		}
 	}
 
 	return result;
 }
+
+#if defined(__HIPCC__)
+
+// HIP has multiple different API functions for kernel launching.
+
+GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, stream, f,
+	gpuError_t, LaunchKernel,
+	const void* f, dim3 numBlocks, dim3 dimBlocks, void** args, size_t sharedMemBytes, gpuStream_t stream)
+GPU_FUNC_LAUNCH_END(numBlocks.x, numBlocks.y, numBlocks.z,
+	dimBlocks.x, dimBlocks.y, dimBlocks.z, sharedMemBytes,
+	f, numBlocks, dimBlocks, args, sharedMemBytes, stream);
+
+GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, stream, f,
+	gpuError_t, ExtLaunchKernel,
+	const void* f, dim3 numBlocks, dim3 dimBlocks, void** args, size_t sharedMemBytes, gpuStream_t stream,
+	gpuEvent_t startEvent, gpuEvent_t stopEvent, int flags)
+GPU_FUNC_LAUNCH_END(numBlocks.x, numBlocks.y, numBlocks.z,
+	dimBlocks.x, dimBlocks.y, dimBlocks.z, sharedMemBytes,
+	f, numBlocks, dimBlocks, args, sharedMemBytes, stream, startEvent, stopEvent, flags);
+
+GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, stream, f,
+	gpuError_t, ModuleLaunchKernel,
+	gpuFunction_t f, unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ,
+	unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ, unsigned int sharedMemBytes,
+	gpuStream_t stream, void** kernelParams, void** extra)
+GPU_FUNC_LAUNCH_END(gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes,
+	f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes,
+	stream, kernelParams, extra);
+
+#else
+
+// CUDA has Runtime API and Driver API functions for kernel launching,
+// but the former in turn calls the latter, so we need to handle the driver API only.
 
 GPU_FUNC_LAUNCH_BEGIN(DriverLibraryPrefix, hStream, f,
 	CUresult, LaunchKernel,
