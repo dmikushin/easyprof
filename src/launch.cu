@@ -133,33 +133,24 @@ RetTy gpuFuncLaunch(const std::string dll, const std::string sym, gpuStream_t st
 	{
 		struct CUfunc_st *pFunc = (struct CUfunc_st *)f;
 		struct kernel *pKernel = pFunc->kernel;
-#ifdef __CUDACC__
+
 		int status;    
 		char* name = abi::__cxa_demangle(pFunc->name, 0, 0, &status);	
-		auto deviceName = status ? pFunc->name : name;
-#else
-		const char* deviceName = "(unknown)";
-#endif
+		std::string deviceName = status ? pFunc->name : name;
+
 		// Get the kernel register count.
 		int nregs = 0;
-#ifdef __CUDACC__
-		if (cuFuncGetAttribute(&nregs, CU_FUNC_ATTRIBUTE_NUM_REGS, pFunc) != CUDA_SUCCESS)
-		{
-			fprintf(stderr, "Could not read the number of registers for function \"%s\"\n", deviceName);
-			auto err = gpuGetLastError();
-		}
-#else
 		struct gpuFuncAttributes attrs;
 		if (gpuFuncGetAttributes(&attrs, (void*)f) != gpuSuccess)
 		{
-			fprintf(stderr, "Could not read the number of registers for function \"%s\"\n", deviceName);
+			fprintf(stderr, "Could not read the number of registers for function \"%s\"\n", deviceName.c_str());
 			auto err = gpuGetLastError();
 		}
 		else
 		{
 			nregs = attrs.numRegs;
 		}
-#endif
+
 		auto result = Profiler::get().funcs.emplace(reinterpret_cast<const void*>(f),
 			std::make_shared<GPUfunction>(GPUfunction
 		{
