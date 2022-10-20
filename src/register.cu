@@ -11,7 +11,7 @@
 #define bind_lib(path, lib) \
 if (!lib) \
 { \
-	lib = dlopen(path, RTLD_NOW | RTLD_GLOBAL); \
+	lib = dlopen(path, RTLD_LAZY | RTLD_GLOBAL); \
 	if (!lib) \
 	{ \
 		LOG("Error loading %s: %s", path, dlerror()); \
