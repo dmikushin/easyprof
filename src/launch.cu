@@ -112,11 +112,15 @@ struct CUfunc_st
 };
 
 template<typename RetTy, typename Function, typename... Args>
-RetTy gpuFuncLaunch(const std::string dll, const std::string sym, gpuStream_t stream, Function f,
+RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, Function f,
 	unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ,
 	unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ,
 	unsigned int sharedMemBytes, Args... args)
 {
+	// Hack around hipExtModuleLaunchKernel, which is aparently _Z24hipExtModuleLaunchKernel.
+	if (sym == "hipExtModuleLaunchKernel")
+		sym = "_Z24hipExtModuleLaunchKernel";
+
 	void* handle = nullptr;
 	{
 		auto it = dlls.find(dll);
