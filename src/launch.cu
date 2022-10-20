@@ -8,8 +8,8 @@
 #include <functional>
 
 #define GPU_FUNC_LAUNCH_BEGIN(prefix, __stream, __function, \
-	RetTy, name, ...) \
-	extern "C" \
+	linkage, RetTy, name, ...) \
+	linkage \
 	RetTy api_name(name, prefix)(__VA_ARGS__) \
 	{ \
 		gpuStream_t __s = static_cast<gpuStream_t>(__stream); \
@@ -231,14 +231,14 @@ RetTy gpuFuncLaunch(const std::string dll, const std::string sym, gpuStream_t st
 // HIP has multiple different API functions for kernel launching.
 
 GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, stream, f,
-	gpuError_t, LaunchKernel,
+	extern "C", gpuError_t, LaunchKernel,
 	const void* f, dim3 numBlocks, dim3 dimBlocks, void** args, size_t sharedMemBytes, gpuStream_t stream)
 GPU_FUNC_LAUNCH_END(numBlocks.x, numBlocks.y, numBlocks.z,
 	dimBlocks.x, dimBlocks.y, dimBlocks.z, sharedMemBytes,
 	f, numBlocks, dimBlocks, args, sharedMemBytes, stream);
 
 GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, stream, f,
-	gpuError_t, ExtLaunchKernel,
+	extern "C", gpuError_t, ExtLaunchKernel,
 	const void* f, dim3 numBlocks, dim3 dimBlocks, void** args, size_t sharedMemBytes, gpuStream_t stream,
 	gpuEvent_t startEvent, gpuEvent_t stopEvent, int flags)
 GPU_FUNC_LAUNCH_END(numBlocks.x, numBlocks.y, numBlocks.z,
@@ -246,7 +246,7 @@ GPU_FUNC_LAUNCH_END(numBlocks.x, numBlocks.y, numBlocks.z,
 	f, numBlocks, dimBlocks, args, sharedMemBytes, stream, startEvent, stopEvent, flags);
 
 GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, stream, f,
-	gpuError_t, ModuleLaunchKernel,
+	extern "C", gpuError_t, ModuleLaunchKernel,
 	gpuFunction_t f, unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ,
 	unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ, unsigned int sharedMemBytes,
 	gpuStream_t stream, void** kernelParams, void** extra)
@@ -256,7 +256,7 @@ GPU_FUNC_LAUNCH_END(gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDim
 
 // This variant is used to deploy the assembly kernels generated in Tensile.
 GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, stream, f,
-	gpuError_t, ExtModuleLaunchKernel,
+	HIP_PUBLIC_API, gpuError_t, ExtModuleLaunchKernel,
 	gpuFunction_t f, unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ,
 	unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ, size_t sharedMemBytes,
 	gpuStream_t stream, void** kernelParams, void** extra,
@@ -271,7 +271,7 @@ GPU_FUNC_LAUNCH_END(gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDim
 // but the former in turn calls the latter, so we need to handle the driver API only.
 
 GPU_FUNC_LAUNCH_BEGIN(DriverLibraryPrefix, hStream, f,
-	CUresult, LaunchKernel,
+	extern "C", CUresult, LaunchKernel,
 	CUfunction f,
 	unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ,
 	unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ,

@@ -7,6 +7,7 @@
 
 #if defined(__HIPCC__)
 #include <hip/hip_runtime.h>
+#include <hip/hip_ext.h>
 using gpuError_t = hipError_t;
 using gpuStream_t = hipStream_t;
 static const auto gpuSuccess = hipSuccess;
