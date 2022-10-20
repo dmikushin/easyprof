@@ -168,7 +168,6 @@ public :
 			std::chrono::time_point<std::chrono::high_resolution_clock>, // time begin
 			std::chrono::time_point<std::chrono::high_resolution_clock>, // time end
 			dim3, dim3, // gridDim, blockDim
-			int // synchronization group index
 		>;
 
 	using Launches = std::vector<Launch>;
@@ -179,16 +178,11 @@ private :
 
 	bool timing = false;
 	
-	// Enforce stream synchronization, when measuring the kernel
-	// execution time.
-	bool synced = false;
-
 	std::map<
 		gpuStream_t, // for each stream
 		std::map<
 			std::string, // for each kernel name
 			std::tuple<
-				unsigned int, // the number of kernels to sync
 				const GPUfunction*, // the corresponding registered function
 				Launches, // launches for the current time interval
 				std::shared_ptr<std::list<Launches> > // archived launches from the previous live intervals
@@ -199,8 +193,6 @@ private :
 	// Archived launches from the previous live intervals,
 	// which is to be filled by a long-running app with many kernel launches.
 	std::map<GPUfunction*, std::shared_ptr<std::list<Launches> > > archive;
-	
-	int sync_group_index = 0;
 	
 public :
 
@@ -215,10 +207,6 @@ public :
 
 	void stop(gpuStream_t stream, std::tuple<Launches*, int>& launch);
 
-	void sync(gpuStream_t stream);
-	
-	void sync();
-	
 	~Timer();
 };
 

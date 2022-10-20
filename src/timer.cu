@@ -21,16 +21,7 @@ Timer::Timer(const std::map<const void*, std::shared_ptr<GPUfunction>>& funcs_) 
 		std::string stiming = ctiming;
 		std::transform(stiming.begin(), stiming.end(), stiming.begin(),
 			[](unsigned char c){ return std::tolower(c); });
-		if (stiming == "synced")
-		{
-			timing = true;
-			synced = true;
-		}
-		else
-		{
-			timing = atoi(ctiming);
-			synced = false;
-		}
+		timing = atoi(ctiming);
 	}
 }
 
@@ -38,11 +29,11 @@ std::tuple<Timer::Launches*, int> Timer::measure(const GPUfunction* func_,
 	const dim3& gridDim, const dim3& blockDim, gpuStream_t stream)
 {
 	auto& kernel = kernels[stream][func_->deviceName];
-	auto& launches = std::get<2>(kernel);
+	auto& launches = std::get<1>(kernel);
 	if ((launches.size() == 0) || (launches.size() == launches.capacity()))
 	{
 		// Assign the corresponding registered function.
-		auto& func = std::get<1>(kernel);
+		auto& func = std::get<0>(kernel);
 		func = func_;
 	
 		// Reserve a lot of memory in advance to make re-allocations
@@ -52,24 +43,7 @@ std::tuple<Timer::Launches*, int> Timer::measure(const GPUfunction* func_,
 
 	std::chrono::time_point<std::chrono::high_resolution_clock> begin, end {};
 
-	if (synced)
-	{
-		gpuError_t status = gpuStreamSynchronize(stream);
-		
-		// TODO If status is bad, forward it to the next user call
-		// of gpuStreamSynchronize().
-		
-		end = std::chrono::high_resolution_clock::now();
-	}
-	else
-	{
-		// In asynchronous mode, we maintain how many latest
-		// kernel launches we need to synchronize.
-		auto& to_sync = std::get<0>(kernel);
-		to_sync++;
-	}
-	
-	launches.emplace_back(std::make_tuple(begin, end, gridDim, blockDim, 0));
+	launches.emplace_back(std::make_tuple(begin, end, gridDim, blockDim));
 	return std::make_tuple(&launches, launches.size() - 1);
 }
 
@@ -89,44 +63,6 @@ void Timer::stop(gpuStream_t stream, std::tuple<Timer::Launches*, int>& launch)
 	
 	auto end = std::chrono::high_resolution_clock::now();
 	std::get<1>(launches[i]) = end;
-
-	sync(stream);
-}
-
-void Timer::sync(gpuStream_t stream)
-{
-	if (synced) return;
-
-	auto end = std::chrono::high_resolution_clock::now();
-	
-	// Synchonize all kernels of stream, which are not yet synchronized.
-	for (auto& pair : kernels[stream])
-	{
-		// const auto& name = pair.first;
-		auto& kernel = pair.second;
-		
-		auto& launches = std::get<2>(kernel);
-		auto& to_sync = std::get<0>(kernel);
-		to_sync = std::min(to_sync, static_cast<unsigned int>(launches.size()));
-		for (int i = 0, ii = launches.size() - to_sync; i < to_sync; i++)
-		{
-			// Set the ending timestamp and the synchronization order index.
-			std::get<1>(launches[ii]) = end;
-			std::get<4>(launches[ii]) = sync_group_index;
-		}
-
-		// Reset the unsynced counter.
-		to_sync = 0;
-	}
-	
-	sync_group_index++;
-}
-
-void Timer::sync()
-{
-	// Sync all outstanding streams.
-	for (auto& pair : kernels)
-		sync(pair.first);
 }
 
 Timer::~Timer()
@@ -152,18 +88,11 @@ Timer::~Timer()
 		{
 			const auto& name = kernel.first;
 
-			const auto& unsynced = std::get<0>(kernel.second);
-			if (unsynced)
-			{
-				fprintf(stderr, "Error: kernel \"%s\" contains %d unsynced launches!\n",
-					name.c_str(), unsynced);
-			}
-
 			// Retrieve the number of registers.
-			auto& func = std::get<1>(kernel.second);
+			auto& func = std::get<0>(kernel.second);
 			unsigned int nregisters = func->nregs;
 			
-			const auto& timings = std::get<2>(kernel.second);
+			const auto& timings = std::get<1>(kernel.second);
 			auto& result = results[name];
 			for (const auto& timing : timings)
 			{
