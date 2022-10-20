@@ -117,14 +117,15 @@ RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, 
 	unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ,
 	unsigned int sharedMemBytes, Args... args)
 {
-	void* handle = nullptr;
+	static void* handle = nullptr;
+	if (!handle)
 	{
 		auto it = dlls.find(dll);
 		if (it != dlls.end())
 			handle = it->second;
 		else
 		{
-			handle = dlopen(dll.c_str(), RTLD_NOW | RTLD_GLOBAL);
+			handle = dlopen(dll.c_str(), RTLD_LAZY | RTLD_GLOBAL);
 			if (!handle)
 			{
 				LOG("Error loading %s: %s", dll.c_str(), dlerror());
