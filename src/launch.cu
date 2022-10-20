@@ -193,18 +193,14 @@ RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, 
 		it = result.first;
 	}
 
-	// Call the real function.
-	auto result = std::invoke(funcReal, args...);
-
 	auto& func = it->second;
 	auto& name = func->deviceName;
+
+	RetTy result;
 
 	// Start profiling the newly-launched kernel.
 	if (Profiler::get().matcher->isMatching(name))
 	{
-		// Don't do anything else, if kernel launch was not successful.
-		if (result != CUDA_SUCCESS) return result;
-		
 		if (Profiler::get().timer->isTiming())
 		{
 			auto record_ = Profiler::get().timer->measure(func.get(),
@@ -220,13 +216,26 @@ RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, 
 			// in order to have the time measurement started and stopped.
 #ifdef __CUDACC__
 			auto err = cuStreamAddCallback(stream, profilerStartTimer, /* userData = */ record, 0);
+
+			// Call the real function.
+			result = std::invoke(funcReal, args...);
+
 			err = cuStreamAddCallback(stream, profilerStopTimer, /* userData = */ record, 0);
 #else
 			// in order to have it to stop the time measurement.
 			auto err = hipStreamAddCallback(stream, profilerStartTimer, /* userData = */ record, 0);
+
+			// Call the real function.
+			result = std::invoke(funcReal, args...);
+
 			err = hipStreamAddCallback(stream, profilerStopTimer, /* userData = */ record, 0);
 #endif
 		}
+	}
+	else
+	{
+		// Call the real function.
+		result = std::invoke(funcReal, args...);
 	}
 
 	return result;

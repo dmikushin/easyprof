@@ -167,7 +167,7 @@ public :
 		std::tuple<
 			std::chrono::time_point<std::chrono::high_resolution_clock>, // time begin
 			std::chrono::time_point<std::chrono::high_resolution_clock>, // time end
-			dim3, dim3, // gridDim, blockDim
+			dim3, dim3 // gridDim, blockDim
 		>;
 
 	using Launches = std::vector<Launch>;
