@@ -1,4 +1,3 @@
-// TODO 1) Callback before launch, same as after launch, which sets the starting timestamp
 // TODO 2) Different socket PORT numbers for HIP (2485) and CUDA (2788)
 // TODO 3) FREEZE_ON_START=1 env variable to wait for a start command in socket
 
@@ -254,6 +253,17 @@ GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, stream, f,
 GPU_FUNC_LAUNCH_END(gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes,
 	f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes,
 	stream, kernelParams, extra);
+
+// This variant is used to deploy the assembly kernels generated in Tensile.
+GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, stream, f,
+	gpuError_t, ExtModuleLaunchKernel,
+	gpuFunction_t f, unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ,
+	unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ, size_t sharedMemBytes,
+	gpuStream_t stream, void** kernelParams, void** extra,
+	gpuEvent_t startEvent, gpuEvent_t stopEvent, uint32_t flags)
+GPU_FUNC_LAUNCH_END(gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes,
+	f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes,
+	stream, kernelParams, extra, startEvent, stopEvent, flags);
 
 #else
 
