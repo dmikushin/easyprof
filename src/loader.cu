@@ -2,6 +2,12 @@
 
 #include <dlfcn.h>
 
+// Perhaps, we can live without dlsym() wrapping in case of HIP,
+// because no dynamic API load is happening, as in case of CUDA's cuGetProcAddress()
+// TODO Also, in case of CUDA we should stop wrapping after the API
+// is loaded, because wrapping everything is very expensive.
+//#define DLSYM_WRAPPER
+
 // Intercept dynamically-loaded API calls, such as in the case
 // of statically-linked cudart.
 // https://stackoverflow.com/questions/15599026/how-can-i-intercept-dlsym-calls-using-ld-preload/18825060#18825060
@@ -20,12 +26,18 @@ SymbolLoader::SymbolLoader()
 		fprintf(stderr, "Error mapping dlsym symbol: \"%s\"\n", dlerror());
 		exit(-1);
 	}
+#ifdef DLSYM_WRAPPER
 	else if (dlsym_real == dlsym)
 	{
 		fprintf(stderr, "The real dlsym() cannot be equal to the dlsym() wrapper\n");
 		exit(-1);
 	}
+#endif
 }
+
+// Perhaps, we can live without dlsym() wrapping in case of HIP,
+// because no dynamic API load is happening, as in case of CUDA's cuGetProcAddress()
+#ifdef DLSYM_WRAPPER
 
 static int __strcmp(const char* s1, const char* s2)
 {
@@ -59,12 +71,14 @@ void* dlsym(void *handle, const char *name) __THROW
 	return result;
 }
 
-#ifndef __HIPCC__
+#endif // DLSYM_WRAPPER
+
+#ifdef __CUDACC__
 
 #define bind_lib(path, lib) \
 if (!lib) \
 { \
-	lib = dlopen(path, RTLD_NOW | RTLD_GLOBAL); \
+	lib = dlopen(path, RTLD_LAZY | RTLD_GLOBAL); \
 	if (!lib) \
 	{ \
 		LOG("Error loading %s: %s", path, dlerror()); \
@@ -104,3 +118,4 @@ CUresult cuGetProcAddress(const char* symbol, void** pfn, int cudaVersion, cuuin
 }
 
 #endif
+
