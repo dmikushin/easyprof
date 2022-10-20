@@ -117,10 +117,6 @@ RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, 
 	unsigned int blockDimX, unsigned int blockDimY, unsigned int blockDimZ,
 	unsigned int sharedMemBytes, Args... args)
 {
-	// Hack around hipExtModuleLaunchKernel, which is aparently _Z24hipExtModuleLaunchKernel.
-	if (sym == "hipExtModuleLaunchKernel")
-		sym = "_Z24hipExtModuleLaunchKernel";
-
 	void* handle = nullptr;
 	{
 		auto it = dlls.find(dll);
@@ -143,6 +139,9 @@ RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, 
 	static Func funcReal = nullptr;
 	if (!funcReal)
 	{
+		// Hack around hipExtModuleLaunchKernel, which is aparently _Z24hipExtModuleLaunchKer@@hip_4.2
+		if (sym == "hipExtModuleLaunchKernel")
+			sym = "_Z24hipExtModuleLaunchKernelP18ihipModuleSymbol_tjjjjjjmP12ihipStream_tPPvS4_P11ihipEvent_tS6_j";
 		funcReal = (Func)SymbolLoader::get(handle, sym.c_str());
 		if (!funcReal)
 		{
@@ -154,13 +153,16 @@ RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, 
 	auto it = Profiler::get().funcs.find(reinterpret_cast<const void*>(f));
 	if (it == Profiler::get().funcs.end())
 	{
+#ifdef __CUDACC__
 		struct CUfunc_st *pFunc = (struct CUfunc_st *)f;
 		struct kernel *pKernel = pFunc->kernel;
 
 		int status;    
 		char* name = abi::__cxa_demangle(pFunc->name, 0, 0, &status);	
 		std::string deviceName = status ? pFunc->name : name;
-
+#else
+		std::string deviceName = "unknown_" + std::to_string(Profiler::get().funcs.size());
+#endif
 		// Get the kernel register count.
 		int nregs = 0;
 		struct gpuFuncAttributes attrs;
