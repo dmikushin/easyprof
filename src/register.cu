@@ -86,33 +86,40 @@ void __hipRegisterFunction(
 extern "C"
 hipError_t hipModuleGetFunction(hipFunction_t *function, hipModule_t module, const char *kname)
 {
-        bind_lib(LIBGPURT, libgpurt);
-        bind_sym(libgpurt, hipModuleGetFunction, hipError_t,
+	bind_lib(LIBGPURT, libgpurt);
+	bind_sym(libgpurt, hipModuleGetFunction, hipError_t,
 		hipFunction_t*, hipModule_t, const char*);
 
-        auto result = hipModuleGetFunction_real(function, module, kname);
+	int status;
+	const char* deviceName = abi::__cxa_demangle(kname, 0, 0, &status);
+	deviceName = status ? kname : deviceName;
 
-        int status;
-        const char* deviceName = abi::__cxa_demangle(kname, 0, 0, &status);
-        deviceName = status ? kname : deviceName;
+	auto result = hipModuleGetFunction_real(function, module, kname);
+	if (result != gpuSuccess)
+	{
+		fprintf(stderr, "Could not load the function \"%s\" from module %p: \"%s\"\n", deviceName,
+			module, hipGetErrorString(result));
+		return result;
+	}
 
-        int nregs = 0;
+	int nregs = 0;
 	if (hipFuncGetAttribute(&nregs, HIP_FUNC_ATTRIBUTE_NUM_REGS, *function) != hipSuccess)
-        {
-                fprintf(stderr, "Could not read the number of registers for function \"%s\"\n", deviceName);
-                auto err = gpuGetLastError();
-        }
+	{
+	        fprintf(stderr, "Could not read the number of registers for function \"%s\": \"%s\"\n", deviceName,
+			hipGetErrorString(result));
+	        auto err = gpuGetLastError();
+	}
 
-        unsigned int sharedMemBytes = 0;
-        Profiler::get().funcs.emplace(reinterpret_cast<const void*>(*function),
-                std::make_shared<GPUfunction>(GPUfunction
-        {
-                /* std::string deviceName; */      deviceName,
-                /* char* deviceFun; */             *function,
-                /* void* module */                 module,
-                /* unsigned int sharedMemBytes; */ sharedMemBytes,
-                /* int nregs; */                   nregs
-        }));
+	unsigned int sharedMemBytes = 0;
+	Profiler::get().funcs.emplace(reinterpret_cast<const void*>(*function),
+	        std::make_shared<GPUfunction>(GPUfunction
+	{
+	        /* std::string deviceName; */      deviceName,
+	        /* char* deviceFun; */             *function,
+	        /* void* module */                 module,
+	        /* unsigned int sharedMemBytes; */ sharedMemBytes,
+	        /* int nregs; */                   nregs
+	}));
 
 	return result;
 }
