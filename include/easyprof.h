@@ -19,6 +19,7 @@ using gpuFunction_t = hipFunction_t;
 using gpuEvent_t = hipEvent_t;
 static const auto gpuSuccess = hipSuccess;
 #define __gpuRegisterFunction __hipRegisterFunction
+#define gpuModuleGetFunction hipModuleGetFunction
 #define GPU_FUNC_ATTRIBUTE_NUM_REGS HIP_FUNC_ATTRIBUTE_NUM_REGS
 #define gpuFuncGetAttribute(...) hipFuncGetAttribute(__VA_ARGS__)
 #define gpuGetLastError() hipGetLastError()
