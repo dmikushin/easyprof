@@ -81,7 +81,7 @@ struct CUfunc_st
 	struct dummy1 *p3;
 };
 
-static const char* nameExtModuleLaunchKernel;
+extern const char* nameExtModuleLaunchKernel;
 
 template<typename RetTy, typename Function, typename... Args>
 RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, Function f,

@@ -36,7 +36,12 @@ static const auto gpuSuccess = CUDA_SUCCESS;
 #define GPU_FUNC_ATTRIBUTE_NUM_REGS CU_FUNC_ATTRIBUTE_NUM_REGS
 #define gpuFuncGetAttribute(...) cuFuncGetAttribute(__VA_ARGS__)
 #define gpuGetLastError() cudaGetLastError()
-#define gpuGetErrorString(...) cuGetErrorString(__VA_ARGS__)
+inline const char* gpuGetErrorString(CUresult err)
+{
+	const char* errStr;
+	cuGetErrorString(err, &errStr);
+	return errStr;
+}
 #define gpuLaunchKernel(...) cuLaunchKernel(__VA_ARGS__)
 #define LIBGPU "/usr/lib/x86_64-linux-gnu/libcuda.so"
 #define LIBGPURT "/usr/local/cuda/lib64/libcudart.so"
@@ -117,7 +122,7 @@ class Profiler
 
 	// We don't use keys, as the kernels and kernels launches
 	// are already keyed by the device function pointer.
-	std::unordered_map<void*, GPUfunction> funcs;
+	std::unordered_map<const void*, GPUfunction> funcs;
 	
 	// This is the current tape for kernel launches. Make it a flat
 	// array to maximize the speed. Furthermore, we make sure the
@@ -143,7 +148,7 @@ public :
 	static Profiler& get();
 
 	template<typename F>
-	void addKernel(void* f, F&& func)
+	void addKernel(const void* f, F&& func)
 	{
 		if (funcs.find(f) != funcs.end()) return;
 		

@@ -37,7 +37,7 @@ void __hipRegisterFunction(
 	void** vfatCubinHandle,
 	const char* hostFun,
 	char* deviceFun,
-	const char* name,
+	const char* deviceName,
 	int thread_limit,
 	uint3* tid,
 	uint3* bid,
@@ -51,16 +51,13 @@ void __hipRegisterFunction(
 		int, uint3*, uint3*, dim3*, dim3*, int*);
 
 	__hipRegisterFunction_real(
-		vfatCubinHandle, hostFun, deviceFun, name,
+		vfatCubinHandle, hostFun, deviceFun, deviceName,
 		thread_limit, tid, bid, bDim, gDim, wSize);
-
-	int status;    
-	const char* deviceName = abi::__cxa_demangle(name, 0, 0, &status);
-	deviceName = status ? name : deviceName;
 
 	int nregs = 0;
 	struct hipFuncAttributes attrs;
-	if (hipFuncGetAttributes(&attrs, reinterpret_cast<const void*>(hostFun)) != hipSuccess)
+	const void* f = reinterpret_cast<const void*>(hostFun);
+	if (hipFuncGetAttributes(&attrs, f) != hipSuccess)
 	{
 		fprintf(stderr, "Could not read the number of registers for function \"%s\"\n", deviceName);
 		auto err = gpuGetLastError();
@@ -70,11 +67,11 @@ void __hipRegisterFunction(
 		nregs = attrs.numRegs;
 	}
 
-	Profiler::get().addKernel(f, []()
+	Profiler::get().addKernel(f, [&]()
 	{
 		return GPUfunction
 		{
-			deviceFun,
+			f,
 			deviceName,
 			nregs
 		};
@@ -98,10 +95,8 @@ gpuError_t gpuModuleGetFunction(gpuFunction_t *function, gpuModule_t module, con
 #endif
 	if (result != gpuSuccess)
 	{
-		const char* errStr;
-		cuGetErrorString(result, &errStr);
 		fprintf(stderr, "Could not load the function \"%s\" from module %p: \"%s\"\n",
-			deviceName, module, errStr);
+			deviceName, module, gpuGetErrorString(result));
 		return result;
 	}
 
@@ -109,10 +104,8 @@ gpuError_t gpuModuleGetFunction(gpuFunction_t *function, gpuModule_t module, con
 	result = gpuFuncGetAttribute(&nregs, GPU_FUNC_ATTRIBUTE_NUM_REGS, *function);
 	if (result != gpuSuccess)
 	{
-		const char* errStr;
-		cuGetErrorString(result, &errStr);
 		fprintf(stderr, "Could not read the number of registers for function \"%s\": \"%s\"\n",
-			deviceName, errStr);
+			deviceName, gpuGetErrorString(result));
 		auto err = gpuGetLastError();
 	}
 
