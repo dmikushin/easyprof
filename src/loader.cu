@@ -6,7 +6,9 @@
 // because no dynamic API load is happening, as in case of CUDA's cuGetProcAddress()
 // TODO Also, in case of CUDA we should stop wrapping after the API
 // is loaded, because wrapping everything is very expensive.
-//#define DLSYM_WRAPPER
+#ifdef __CUDACC__
+#define DLSYM_WRAPPER
+#endif
 
 // Intercept dynamically-loaded API calls, such as in the case
 // of statically-linked cudart.
@@ -35,10 +37,6 @@ SymbolLoader::SymbolLoader()
 #endif
 }
 
-// Perhaps, we can live without dlsym() wrapping in case of HIP,
-// because no dynamic API load is happening, as in case of CUDA's cuGetProcAddress()
-#ifdef DLSYM_WRAPPER
-
 static int __strcmp(const char* s1, const char* s2)
 {
 	for (int i = 0; ; i++)
@@ -51,6 +49,10 @@ static int __strcmp(const char* s1, const char* s2)
 
 	return 0;
 }
+
+// Perhaps, we can live without dlsym() wrapping in case of HIP,
+// because no dynamic API load is happening, as in case of CUDA's cuGetProcAddress()
+#ifdef DLSYM_WRAPPER
 
 extern "C" 
 void* dlsym(void *handle, const char *name) __THROW

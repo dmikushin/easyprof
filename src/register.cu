@@ -1,11 +1,8 @@
 // For HIP, we wrap over the __hipRegisterFunction() call, because it's the only way
 // to obtain the mapping between the device function pointer and device function name.
 
-#ifdef __HIPCC__
-
 #include "easyprof.h"
 
-#include <cxxabi.h>
 #include <dlfcn.h>
 
 #define bind_lib(path, lib) \
@@ -32,6 +29,8 @@ if (!sym##_real) \
 		abort(); \
 	} \
 }
+
+#ifdef __HIPCC__
 
 extern "C"
 void __hipRegisterFunction(
@@ -70,59 +69,63 @@ void __hipRegisterFunction(
 	{
 		nregs = attrs.numRegs;
 	}
-	
-	unsigned int sharedMemBytes = 0;
-	Profiler::get().funcs.emplace(reinterpret_cast<const void*>(hostFun),
-		std::make_shared<GPUfunction>(GPUfunction
+
+	Profiler::get().addKernel(f, []()
 	{
-		/* std::string deviceName; */      deviceName,
-		/* char* deviceFun; */             deviceFun,
-		/* void* module */                 vfatCubinHandle,
-		/* unsigned int sharedMemBytes; */ sharedMemBytes,
-		/* int nregs; */                   nregs
-	}));
+		return GPUfunction
+		{
+			deviceFun,
+			deviceName,
+			nregs
+		};
+	});
 }
 
+#endif // __HIPCC__
+
 extern "C"
-hipError_t hipModuleGetFunction(hipFunction_t *function, hipModule_t module, const char *kname)
+gpuError_t gpuModuleGetFunction(gpuFunction_t *function, gpuModule_t module, const char *deviceName)
 {
 	bind_lib(LIBGPURT, libgpurt);
-	bind_sym(libgpurt, hipModuleGetFunction, hipError_t,
-		hipFunction_t*, hipModule_t, const char*);
-
-	int status;
-	const char* deviceName = abi::__cxa_demangle(kname, 0, 0, &status);
-	deviceName = status ? kname : deviceName;
-
-	auto result = hipModuleGetFunction_real(function, module, kname);
+#ifdef __CUDACC__
+	bind_sym(libgpu, cuModuleGetFunction, gpuError_t,
+		gpuFunction_t*, gpuModule_t, const char*);
+	auto result = cuModuleGetFunction_real(function, module, deviceName);
+#else
+	bind_sym(libgpurt, hipModuleGetFunction, gpuError_t,
+		gpuFunction_t*, gpuModule_t, const char*);
+	auto result = hipModuleGetFunction_real(function, module, deviceName);
+#endif
 	if (result != gpuSuccess)
 	{
-		fprintf(stderr, "Could not load the function \"%s\" from module %p: \"%s\"\n", deviceName,
-			module, hipGetErrorString(result));
+		const char* errStr;
+		cuGetErrorString(result, &errStr);
+		fprintf(stderr, "Could not load the function \"%s\" from module %p: \"%s\"\n",
+			deviceName, module, errStr);
 		return result;
 	}
 
 	int nregs = 0;
-	if (hipFuncGetAttribute(&nregs, HIP_FUNC_ATTRIBUTE_NUM_REGS, *function) != hipSuccess)
+	result = gpuFuncGetAttribute(&nregs, GPU_FUNC_ATTRIBUTE_NUM_REGS, *function);
+	if (result != gpuSuccess)
 	{
-	        fprintf(stderr, "Could not read the number of registers for function \"%s\": \"%s\"\n", deviceName,
-			hipGetErrorString(result));
-	        auto err = gpuGetLastError();
+		const char* errStr;
+		cuGetErrorString(result, &errStr);
+		fprintf(stderr, "Could not read the number of registers for function \"%s\": \"%s\"\n",
+			deviceName, errStr);
+		auto err = gpuGetLastError();
 	}
 
-	unsigned int sharedMemBytes = 0;
-	Profiler::get().funcs.emplace(reinterpret_cast<const void*>(*function),
-	        std::make_shared<GPUfunction>(GPUfunction
+	Profiler::get().addKernel(*function, [&]()
 	{
-	        /* std::string deviceName; */      deviceName,
-	        /* char* deviceFun; */             *function,
-	        /* void* module */                 module,
-	        /* unsigned int sharedMemBytes; */ sharedMemBytes,
-	        /* int nregs; */                   nregs
-	}));
+		return GPUfunction
+		{
+			*function,
+			deviceName,
+			nregs
+		};
+	});
 
 	return result;
 }
-
-#endif // __HIPCC__
 

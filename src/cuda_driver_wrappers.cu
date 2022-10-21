@@ -5,6 +5,8 @@
 std::vector<GPUapiFunc> gpuAPI =
 {
 	GPU_API_NAME(cuGetProcAddress),
+	
+	GPU_API_NAME(cuModuleGetFunction),
 
 	GPU_API_NAME(cuLaunchCooperativeKernel),
 	GPU_API_NAME(cuLaunchHostFunc),

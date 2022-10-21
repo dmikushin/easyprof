@@ -1,12 +1,11 @@
-#include <map>
-#include <memory>
-#include <stdint.h>
+#include <assert.h>
+#include <cxxabi.h>
+#include <iostream>
 #include <stdio.h>
 #include <string>
 #include <string.h>
 #include <stdlib.h>
 #include <tuple>
-#include <vector>
 
 #include "easyprof.h"
 
@@ -14,22 +13,216 @@ void* libdl = nullptr;
 void* libgpu = nullptr;
 void* libgpurt = nullptr;
 
-Profiler::Profiler()
+static bool operator<(const dim3& v1, const dim3& v2)
 {
-	matcher = new Matcher(funcs);
-	timer = new Timer(funcs);
+	auto c1 = reinterpret_cast<const char*>(&v1);
+	auto c2 = reinterpret_cast<const char*>(&v2);
+	return memcmp(c1, c2, sizeof(dim3)) > 0;
 }
 
-Profiler::~Profiler()
+void Profiler::rotateArchive()
 {
-	delete matcher;
-	delete timer;
-};
+	archive.emplace_back();
+	launches = &archive.back();
+	launches->reserve(1024 * 1024);
+}
+
+Profiler::Profiler()
+{
+	// Allocate the first slice of space for profiling data.
+	rotateArchive();
+}
 
 Profiler& Profiler::get()
 {
 	static Profiler profiler;
 	return profiler;
+}
+
+Launch* Profiler::start(gpuStream_t stream, const void* deviceFun,
+	const dim3& numBlocks, const dim3& dimBlocks, unsigned int sharedMemBytes)
+{
+	if (launches->size() == launches->capacity())
+		rotateArchive();
+	
+	Timestamp begin {}, end {};
+	launches->push_back(Launch
+	{
+		deviceFun,
+		begin, end,
+		numBlocks, dimBlocks,
+		sharedMemBytes
+	});
+
+	auto launch = &launches->at(launches->size() - 1);
+	
+	// CUDA/HIP APIs can execute a user callback function, when the corresponding
+	// stream reaches the point of interest. We use this feature to track kernels
+	// execution in a simple way.
+#ifdef __CUDACC__
+	auto err = cuStreamAddCallback(stream, [](CUstream stream, CUresult status, void *userData)
+#else
+	auto err = hipStreamAddCallback(stream, [](hipStream_t stream, hipError_t status, void *userData)
+#endif
+	{
+		auto& launch = *reinterpret_cast<Launch*>(userData);
+		launch.begin = std::chrono::high_resolution_clock::now();
+	},
+	launch, 0);
+	
+	return launch;
+}
+
+void Profiler::stop(gpuStream_t stream, Launch* launch)
+{
+#ifdef __CUDACC__
+	auto err = cuStreamAddCallback(stream, [](CUstream stream, CUresult status, void *userData)
+#else
+	auto err = hipStreamAddCallback(stream, [](hipStream_t stream, hipError_t status, void *userData)
+#endif
+	{
+		auto& launch = *reinterpret_cast<Launch*>(userData);
+		launch.end = std::chrono::high_resolution_clock::now();
+	},
+	launch, 0);
+}
+
+Profiler::~Profiler()
+{
+	std::map<
+		std::string, // kernel name
+		std::pair<
+			unsigned int, // the number of registers for the kernel
+			std::map<
+				std::tuple<dim3, dim3, unsigned int>, // grid dim, block dim, shared memory
+				std::tuple<
+					double, double, double, // min/max/average time
+					unsigned int // number of calls
+				>
+			>
+		>
+	> results;
+
+	// Demangle names of kernels.
+	{
+		int i = 0;
+		for (auto& [_, func] : funcs)
+		{
+			auto& name = func.deviceName;
+			if (name == "")
+				name = std::to_string(i++);
+			else
+			{
+				int status;    
+				char* nameDemangled = abi::__cxa_demangle(name.c_str(), 0, 0, &status);
+				if (status == 0)
+					name = nameDemangled;	
+			}
+		}
+	}
+
+	// Accumulate the results.
+	bool notFullyCaptured = false;
+	for (auto& [_, func] : funcs)
+	{
+		const auto& deviceFun = func.deviceFun;
+		const auto& deviceName = func.deviceName;
+		const auto nregs = func.nregs;
+
+		auto& result = results[deviceName];
+		result.first = nregs;
+		
+		// TODO Get the number of registers for the kernel here.
+			
+		for (const auto& launches : archive)
+		{
+			for (const auto& launch : launches)
+			{
+				if (launch.deviceFun != deviceFun) continue;
+			
+				const auto& begin = launch.begin;
+				const auto& end = launch.end;
+				
+				// Ignore launches, which are not fully captured.
+				std::chrono::time_point<std::chrono::high_resolution_clock> zero {};
+				if (end == zero)
+				{
+					notFullyCaptured = true;
+					continue;
+				}
+				auto duration = std::chrono::duration<double, std::micro>{end - begin}.count();
+				if (duration <= 0.0)
+				{
+					notFullyCaptured = true;
+					continue;
+				}
+
+				const auto& numBlocks = launch.numBlocks;
+				const auto& dimBlocks = launch.dimBlocks;
+				const auto& sharedMemBytes = launch.sharedMemBytes;
+
+				auto& stats = result.second[std::make_tuple(numBlocks, dimBlocks, sharedMemBytes)];
+				auto& min = std::get<0>(stats);
+				auto& max = std::get<1>(stats);
+				auto& avg = std::get<2>(stats);
+				auto& ncalls = std::get<3>(stats);
+				
+				if (ncalls)
+				{
+					min = std::min(min, duration);
+					max = std::max(max, duration);
+				}
+				else
+				{
+					min = duration;
+					max = duration;
+				}
+				
+				assert(min > 0.0);
+				assert(max > 0.0);
+				
+				avg += duration;
+				ncalls++;
+			} 
+		}
+	}
+	
+	if (notFullyCaptured)
+	{
+		fprintf(stderr, "Not all kernels launches were captured correctly,"
+			" the app could have GPU errors or is interrupted");
+	}
+		
+	// Conclude and report the results.
+	for (auto& result : results)
+	{
+		const auto& name = result.first;			
+		const auto nregisters = result.second.first;
+		
+		// Report results only for the kernels that are launched at least once.
+		if (!result.second.second.size()) continue;
+
+		// TODO If the name is long, maybe shorten it to the last part after ::
+		std::cout << name << " (" << nregisters << " registers)" << std::endl;
+		
+		for (auto& grid : result.second.second)
+		{
+			const dim3& numBlocks = std::get<0>(grid.first);
+			const dim3& dimBlocks = std::get<1>(grid.first);
+			const auto& sharedMemBytes = std::get<2>(grid.first);
+			
+			const auto min = std::get<0>(grid.second);
+			const auto max = std::get<1>(grid.second);
+			auto& avg = std::get<2>(grid.second);
+			const unsigned int ncalls = std::get<3>(grid.second);
+			avg /= ncalls;
+			
+			std::cout << ncalls << " x <<<(" << numBlocks.x << ", " << numBlocks.y << ", " << numBlocks.z << "), (" <<
+				dimBlocks.x << ", " << dimBlocks.y << ", " << dimBlocks.z << ")" <<
+				(sharedMemBytes ? ", " + std::to_string(sharedMemBytes) : "") << ">>> " <<
+				"min = " << min << "ms, max = " << max << "ms, avg = " << avg << "ms" << std::endl;
+		}
+	}
 }
 
 std::map<std::string, void*> dlls;

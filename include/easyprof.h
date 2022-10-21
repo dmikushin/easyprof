@@ -3,55 +3,39 @@
 
 #include <chrono>
 #include <list>
+#include <map>
 #include <memory>
+#include <string>
+#include <unordered_map>
+#include <vector>
 
 #if defined(__HIPCC__)
 #include <hip/hip_runtime.h>
 #include <hip/hip_ext.h>
 using gpuError_t = hipError_t;
 using gpuStream_t = hipStream_t;
+using gpuModule_t = hipModule_t;
+using gpuFunction_t = hipFunction_t;
+using gpuEvent_t = hipEvent_t;
 static const auto gpuSuccess = hipSuccess;
-#define __gpuRegisterFunction __hipRegisterFunction
-#define gpuFuncAttributes hipFuncAttributes
-#define gpuFuncGetAttributes(...) hipFuncGetAttributes(__VA_ARGS__)
-#define gpuGetLastError(...) hipGetLastError(__VA_ARGS__)
-// In HIP, hipLaunchKernel talks to the AMD driver directly,
-// not as CUDA, which redirects cudaLaunchKernel to cuLaunchKernel.
-#define gpuLaunchKernel(...) hipLaunchKernel(__VA_ARGS__)
-// HIP-enabled libraries may call two different flavors of hipLaunchKernel
-// presented below.
-#define gpuModuleLaunchKernel(...) hipModuleLaunchKernel(__VA_ARGS__)
-#define gpuExtLaunchKernel(...) hipExtLaunchKernel(__VA_ARGS__)
-// These two types are used by hipModuleLaunchKernel and hipExtLaunchKernel
-#define gpuFunction_t hipFunction_t
-#define gpuEvent_t hipEvent_t
-#define gpuStreamSynchronize(...) hipStreamSynchronize(__VA_ARGS__)
-// In HIP, the CUDA driver styled context management is deprecated.
-// So unlike in CUDA where cudaDeviceSynchronize calls cuCtxSynchronize,
-// here we hook hipStreamSynchronize directly. 
-#define gpuDeviceSynchronize() hipDeviceSynchronize()
-#define gpuMemcpyKind hipMemcpyKind
-#define gpuMemcpy(...) hipMemcpy(__VA_ARGS__)
-#define gpuMemcpyAsync(...) hipMemcpyAsync(__VA_ARGS__)
+#define GPU_FUNC_ATTRIBUTE_NUM_REGS HIP_FUNC_ATTRIBUTE_NUM_REGS
+#define gpuFuncGetAttribute(...) hipFuncGetAttribute(__VA_ARGS__)
+#define gpuGetLastError() hipGetLastError()
+#define gpuGetErrorString(...) hipGetErrorString(__VA_ARGS__)
 #define LIBGPURT "/opt/rocm/hip/lib/libamdhip64.so"
 #else
 #include <cuda.h>
 #include <cuda_runtime.h>
-using gpuError_t = cudaError_t;
-using gpuStream_t = cudaStream_t;
-static const auto gpuSuccess = cudaSuccess;
-#define __gpuRegisterFunction __cudaRegisterFunction
-#define gpuFuncAttributes cudaFuncAttributes
-#define gpuFuncGetAttributes(...) cudaFuncGetAttributes(__VA_ARGS__)
-#define gpuGetLastError(...) cudaGetLastError(__VA_ARGS__)
-// In CUDA, cudaLaunchKernel calls cuLaunchKernel, so we hook just for the last one.
+using gpuError_t = CUresult;
+using gpuStream_t = CUstream;
+using gpuModule_t = CUmodule;
+using gpuFunction_t = CUfunction;
+static const auto gpuSuccess = CUDA_SUCCESS;
+#define GPU_FUNC_ATTRIBUTE_NUM_REGS CU_FUNC_ATTRIBUTE_NUM_REGS
+#define gpuFuncGetAttribute(...) cuFuncGetAttribute(__VA_ARGS__)
+#define gpuGetLastError() cudaGetLastError()
+#define gpuGetErrorString(...) cuGetErrorString(__VA_ARGS__)
 #define gpuLaunchKernel(...) cuLaunchKernel(__VA_ARGS__)
-#define gpuStreamSynchronize(...) cudaStreamSynchronize(__VA_ARGS__)
-// In CUDA, cudaDeviceSynchronize calls cuCtxSynchronize
-#define gpuDeviceSynchronize() cuCtxSynchronize()
-#define gpuMemcpyKind cudaMemcpyKind
-#define gpuMemcpy(...) cudaMemcpy(__VA_ARGS__)
-#define gpuMemcpyAsync(...) cudaMemcpyAsync(__VA_ARGS__)
 #define LIBGPU "/usr/lib/x86_64-linux-gnu/libcuda.so"
 #define LIBGPURT "/usr/local/cuda/lib64/libcudart.so"
 #endif
@@ -77,10 +61,6 @@ extern void* libgpurt;
 #define str_prefix(prefix) #prefix
 #define str_api_name(name, prefix) #prefix #name
 #define api_name(name, prefix) prefix##name
-
-#include <map>
-#include <string>
-#include <vector>
 
 extern std::map<std::string, void*> dlls;
 
@@ -113,20 +93,42 @@ extern std::vector<GPUapiFunc> gpuAPI;
 
 struct GPUfunction
 {
-	std::string deviceName;
 	const void* deviceFun;
-	void* module;
-	unsigned int sharedMemBytes;
+	std::string deviceName;
 	int nregs;
 };
 
-class Matcher;
-class Timer;
+using Timestamp = std::chrono::time_point<std::chrono::high_resolution_clock>;
+
+struct Launch
+{
+	const void* deviceFun;
+	Timestamp begin, end;
+	dim3 numBlocks, dimBlocks;
+	unsigned int sharedMemBytes;
+};
 
 // Maintaining the proper order of destruction.
 class Profiler
 {
 	Profiler();
+
+	// We don't use keys, as the kernels and kernels launches
+	// are already keyed by the device function pointer.
+	std::unordered_map<void*, GPUfunction> funcs;
+	
+	// This is the current tape for kernel launches. Make it a flat
+	// array to maximize the speed. Furthermore, we make sure the
+	// vector is not reallocated, and the data record pointer passed
+	// to the stream callbacks remains valid.
+	std::vector<Launch>* launches;
+	
+	// Our memory is infinite, we just grow it once in a while.
+	// Later we may dynamically offload old recordings somewhere,
+	// perhaps send them over via a socket.
+	std::list<std::vector<Launch>> archive;
+	
+	void rotateArchive();
 
 public :
 
@@ -138,76 +140,18 @@ public :
 
 	static Profiler& get();
 
-	std::map<const void*, std::shared_ptr<GPUfunction>> funcs;
+	template<typename F>
+	void addKernel(void* f, F&& func)
+	{
+		if (funcs.find(f) != funcs.end()) return;
+		
+		funcs.emplace(f, func());
+	}
 
-	Matcher* matcher;
+	Launch* start(gpuStream_t stream, const void* deviceFun,
+		const dim3& gridDim, const dim3& blockDim, unsigned int sharedMemBytes);
 
-	// TODO must support threads.
-	Timer* timer;
-};
-
-class Matcher
-{
-	const std::map<const void*, std::shared_ptr<GPUfunction>>& funcs;
-
-	std::string pattern;
-
-public :
-
-	bool isMatching(const std::string& name);
-
-	Matcher(const std::map<const void*, std::shared_ptr<GPUfunction>>& funcs_);
-};
-
-class Timer
-{
-public :
-
-	using Launch =
-		std::tuple<
-			std::chrono::time_point<std::chrono::high_resolution_clock>, // time begin
-			std::chrono::time_point<std::chrono::high_resolution_clock>, // time end
-			dim3, dim3 // gridDim, blockDim
-		>;
-
-	using Launches = std::vector<Launch>;
-
-private :
-
-	const std::map<const void*, std::shared_ptr<GPUfunction>>& funcs;
-
-	bool timing = false;
-	
-	std::map<
-		gpuStream_t, // for each stream
-		std::map<
-			std::string, // for each kernel name
-			std::tuple<
-				const GPUfunction*, // the corresponding registered function
-				Launches, // launches for the current time interval
-				std::shared_ptr<std::list<Launches> > // archived launches from the previous live intervals
-			>
-		>
-	> kernels;
-	
-	// Archived launches from the previous live intervals,
-	// which is to be filled by a long-running app with many kernel launches.
-	std::map<GPUfunction*, std::shared_ptr<std::list<Launches> > > archive;
-	
-public :
-
-	bool isTiming();
-	
-	Timer(const std::map<const void*, std::shared_ptr<GPUfunction>>& funcs_) ;
-
-	std::tuple<Launches*, int> measure(const GPUfunction* func,
-		const dim3& gridDim, const dim3& blockDim, gpuStream_t stream);
-
-	void start(gpuStream_t stream, std::tuple<Launches*, int>& launch);
-
-	void stop(gpuStream_t stream, std::tuple<Launches*, int>& launch);
-
-	~Timer();
+	void stop(gpuStream_t stream, Launch* launch);
 };
 
 #endif // EASYPROF_H

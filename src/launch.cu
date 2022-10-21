@@ -3,7 +3,6 @@
 
 #include "easyprof.h"
 
-#include <cxxabi.h>
 #include <dlfcn.h>
 #include <functional>
 
@@ -20,37 +19,8 @@
 			__VA_ARGS__); \
 	}
 
-// CUDA/HIP APIs can execute a user callback function, when the corresponding
-// stream reaches the point of interest. We use this feature to track kernels
-// execution in a simple way.
-#ifdef __HIPCC__
-static void profilerStartTimer(hipStream_t stream, hipError_t status, void *userData)
-#else
-static void profilerStartTimer(CUstream stream, CUresult status, void *userData)
-#endif
-{
-	auto launch = *reinterpret_cast<std::tuple<Timer::Launches*, int>*>(userData);
-
-	if (Profiler::get().timer->isTiming())
-		Profiler::get().timer->start(stream, launch);
-}
-
-#ifdef __HIPCC__
-static void profilerStopTimer(hipStream_t stream, hipError_t status, void *userData)
-#else
-static void profilerStopTimer(CUstream stream, CUresult status, void *userData)
-#endif
-{
-	auto launch = reinterpret_cast<std::tuple<Timer::Launches*, int>*>(userData);
-
-	if (Profiler::get().timer->isTiming())
-		Profiler::get().timer->stop(stream, *launch);
-	
-	delete launch;
-}
-
 // This is a reverse-engineering of some internal CUDA structures,
-// in order to reach out some data, most importantly to the kernel name.
+// in order to reach out to some data, most importantly the kernel name.
 
 struct kernel
 {
@@ -111,6 +81,8 @@ struct CUfunc_st
 	struct dummy1 *p3;
 };
 
+static const char* nameExtModuleLaunchKernel;
+
 template<typename RetTy, typename Function, typename... Args>
 RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, Function f,
 	unsigned int gridDimX, unsigned int gridDimY, unsigned int gridDimZ,
@@ -140,9 +112,10 @@ RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, 
 	static Func funcReal = nullptr;
 	if (!funcReal)
 	{
-		// Hack around hipExtModuleLaunchKernel, which is aparently _Z24hipExtModuleLaunchKer@@hip_4.2
+		// Hack around hipExtModuleLaunchKernel, which is the one API function with C++ mangling.
 		if (sym == "hipExtModuleLaunchKernel")
-			sym = "_Z24hipExtModuleLaunchKernelP18ihipModuleSymbol_tjjjjjjmP12ihipStream_tPPvS4_P11ihipEvent_tS6_j";
+			sym = nameExtModuleLaunchKernel;
+
 		funcReal = (Func)SymbolLoader::get(handle, sym.c_str());
 		if (!funcReal)
 		{
@@ -151,93 +124,19 @@ RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, 
 		}
 	}
 
-	auto it = Profiler::get().funcs.find(reinterpret_cast<const void*>(f));
-	if (it == Profiler::get().funcs.end())
-	{
-#ifdef __CUDACC__
-		struct CUfunc_st *pFunc = (struct CUfunc_st *)f;
-		struct kernel *pKernel = pFunc->kernel;
-
-		int status;    
-		char* name = abi::__cxa_demangle(pFunc->name, 0, 0, &status);	
-		std::string deviceName = status ? pFunc->name : name;
-#else
-		std::string deviceName = "unknown_" + std::to_string(Profiler::get().funcs.size());
-#endif
-		// Get the kernel register count.
-		int nregs = 0;
-		struct gpuFuncAttributes attrs;
-		if (gpuFuncGetAttributes(&attrs, (void*)f) != gpuSuccess)
-		{
-			fprintf(stderr, "Could not read the number of registers for function \"%s\"\n", deviceName.c_str());
-			auto err = gpuGetLastError();
-		}
-		else
-		{
-			nregs = attrs.numRegs;
-		}
-
-		auto result = Profiler::get().funcs.emplace(reinterpret_cast<const void*>(f),
-			std::make_shared<GPUfunction>(GPUfunction
-		{
-			/* std::string deviceName; */      deviceName,
-			/* char* deviceFun; */             f,
-#ifdef __CUDACC__
-			/* void* module */                 pKernel->module,
-#else
-			/* void* module */                 nullptr,
-#endif
-			/* unsigned int sharedMemBytes; */ sharedMemBytes,
-			/* int nregs; */                   nregs
-		}));
-
-		it = result.first;
-	}
-
-	auto& func = it->second;
-	auto& name = func->deviceName;
-
-	RetTy result;
-
 	// Start profiling the newly-launched kernel.
-	if (Profiler::get().matcher->isMatching(name))
-	{
-		if (Profiler::get().timer->isTiming())
-		{
-			auto record_ = Profiler::get().timer->measure(func.get(),
-				dim3(gridDimX, gridDimY, gridDimZ),
-				dim3(blockDimX, blockDimY, blockDimZ),
-				stream);
+	// Insert a callback into the same stream before and after the launch,
+	// in order to have the time measurement started and stopped.
+	auto launch = Profiler::get().start(
+		stream, f,
+		dim3(gridDimX, gridDimY, gridDimZ),
+		dim3(blockDimX, blockDimY, blockDimZ),
+		sharedMemBytes);
 
-			// XXX This IS horrible, but we are in the rush on developing bad code, right?
-			auto record = new decltype(record_);
-			*record = record_;
+	// Call the real kernel launch function.
+	auto result = std::invoke(funcReal, args...);
 
-			// Insert a callback into the same stream before and after the launch,
-			// in order to have the time measurement started and stopped.
-#ifdef __CUDACC__
-			auto err = cuStreamAddCallback(stream, profilerStartTimer, /* userData = */ record, 0);
-
-			// Call the real function.
-			result = std::invoke(funcReal, args...);
-
-			err = cuStreamAddCallback(stream, profilerStopTimer, /* userData = */ record, 0);
-#else
-			// in order to have it to stop the time measurement.
-			auto err = hipStreamAddCallback(stream, profilerStartTimer, /* userData = */ record, 0);
-
-			// Call the real function.
-			result = std::invoke(funcReal, args...);
-
-			err = hipStreamAddCallback(stream, profilerStopTimer, /* userData = */ record, 0);
-#endif
-		}
-	}
-	else
-	{
-		// Call the real function.
-		result = std::invoke(funcReal, args...);
-	}
+	Profiler::get().stop(stream, launch);
 
 	return result;
 }
@@ -245,7 +144,10 @@ RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, 
 #if defined(__HIPCC__)
 
 // HIP has multiple different API functions for kernel launching.
-
+// In HIP, hipLaunchKernel talks to the AMD driver directly,
+// not as CUDA, which redirects cudaLaunchKernel to cuLaunchKernel.
+// HIP-enabled libraries may call all different flavors of launch
+// functions presented below.
 GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, stream, f,
 	extern "C", gpuError_t, LaunchKernel,
 	const void* f, dim3 numBlocks, dim3 dimBlocks, void** args, size_t sharedMemBytes, gpuStream_t stream)
@@ -280,6 +182,10 @@ GPU_FUNC_LAUNCH_BEGIN(RuntimeLibraryPrefix, stream, f,
 GPU_FUNC_LAUNCH_END(gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes,
 	f, gridDimX, gridDimY, gridDimZ, blockDimX, blockDimY, blockDimZ, sharedMemBytes,
 	stream, kernelParams, extra, startEvent, stopEvent, flags);
+// Note unlike the others hipExtModuleLaunchKernel function (suprisingly) belongs to the C++ API,
+// not C API. So we have to provide its mangled name to dlsym().
+const char* nameExtModuleLaunchKernel =
+	"_Z24hipExtModuleLaunchKernelP18ihipModuleSymbol_tjjjjjjmP12ihipStream_tPPvS4_P11ihipEvent_tS6_j";
 
 #else
 
