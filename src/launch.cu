@@ -81,7 +81,9 @@ struct CUfunc_st
 	struct dummy1 *p3;
 };
 
+#ifdef __HIPCC__
 extern const char* nameExtModuleLaunchKernel;
+#endif
 
 template<typename RetTy, typename Function, typename... Args>
 RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, Function f,
@@ -112,10 +114,11 @@ RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, 
 	static Func funcReal = nullptr;
 	if (!funcReal)
 	{
+#ifdef __HIPCC__
 		// Hack around hipExtModuleLaunchKernel, which is the one API function with C++ mangling.
 		if (sym == "hipExtModuleLaunchKernel")
 			sym = nameExtModuleLaunchKernel;
-
+#endif
 		funcReal = (Func)SymbolLoader::get(handle, sym.c_str());
 		if (!funcReal)
 		{
