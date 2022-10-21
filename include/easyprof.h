@@ -18,6 +18,7 @@ using gpuModule_t = hipModule_t;
 using gpuFunction_t = hipFunction_t;
 using gpuEvent_t = hipEvent_t;
 static const auto gpuSuccess = hipSuccess;
+#define __gpuRegisterFunction __hipRegisterFunction
 #define GPU_FUNC_ATTRIBUTE_NUM_REGS HIP_FUNC_ATTRIBUTE_NUM_REGS
 #define gpuFuncGetAttribute(...) hipFuncGetAttribute(__VA_ARGS__)
 #define gpuGetLastError() hipGetLastError()
@@ -31,6 +32,7 @@ using gpuStream_t = CUstream;
 using gpuModule_t = CUmodule;
 using gpuFunction_t = CUfunction;
 static const auto gpuSuccess = CUDA_SUCCESS;
+#define gpuModuleGetFunction cuModuleGetFunction
 #define GPU_FUNC_ATTRIBUTE_NUM_REGS CU_FUNC_ATTRIBUTE_NUM_REGS
 #define gpuFuncGetAttribute(...) cuFuncGetAttribute(__VA_ARGS__)
 #define gpuGetLastError() cudaGetLastError()

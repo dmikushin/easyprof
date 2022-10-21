@@ -89,6 +89,13 @@ void Profiler::stop(gpuStream_t stream, Launch* launch)
 
 Profiler::~Profiler()
 {
+	size_t count = 0;
+	for (const auto& launches : archive)
+		count += launches.size();
+
+	printf("Processing %zu recordings for %zu kernels, this may take a while\n",
+		count, funcs.size());
+
 	std::map<
 		std::string, // kernel name
 		std::pair<
