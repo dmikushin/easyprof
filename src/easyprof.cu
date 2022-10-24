@@ -197,7 +197,7 @@ Profiler::~Profiler()
 	if (notFullyCaptured)
 	{
 		fprintf(stderr, "Not all kernels launches were captured correctly,"
-			" the app could have GPU errors or is interrupted");
+			" the app could have GPU errors or is interrupted\n");
 	}
 		
 	// Conclude and report the results.
