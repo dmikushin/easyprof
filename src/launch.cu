@@ -130,11 +130,10 @@ RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, 
 	// Start profiling the newly-launched kernel.
 	// Insert a callback into the same stream before and after the launch,
 	// in order to have the time measurement started and stopped.
-	auto launch = Profiler::get().start(
-		stream, f,
+	auto launch = Profiler::get().start(f,
 		dim3(gridDimX, gridDimY, gridDimZ),
 		dim3(blockDimX, blockDimY, blockDimZ),
-		sharedMemBytes);
+		sharedMemBytes, stream);
 
 	// Call the real kernel launch function.
 	auto result = std::invoke(funcReal, args...);

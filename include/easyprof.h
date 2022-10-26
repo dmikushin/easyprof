@@ -114,6 +114,7 @@ struct Launch
 	Timestamp begin, end;
 	dim3 numBlocks, dimBlocks;
 	unsigned int sharedMemBytes;
+	gpuStream_t stream;
 };
 
 // Maintaining the proper order of destruction.
@@ -156,8 +157,9 @@ public :
 		funcs.emplace(f, func());
 	}
 
-	Launch* start(gpuStream_t stream, const void* deviceFun,
-		const dim3& gridDim, const dim3& blockDim, unsigned int sharedMemBytes);
+	Launch* start(const void* deviceFun,
+		const dim3& gridDim, const dim3& blockDim,
+		unsigned int sharedMemBytes, gpuStream_t stream);
 
 	void stop(gpuStream_t stream, Launch* launch);
 };

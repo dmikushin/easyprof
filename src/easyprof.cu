@@ -39,8 +39,9 @@ Profiler& Profiler::get()
 	return profiler;
 }
 
-Launch* Profiler::start(gpuStream_t stream, const void* deviceFun,
-	const dim3& numBlocks, const dim3& dimBlocks, unsigned int sharedMemBytes)
+Launch* Profiler::start(const void* deviceFun,
+	const dim3& numBlocks, const dim3& dimBlocks,
+	unsigned int sharedMemBytes, gpuStream_t stream)
 {
 	if (launches->size() == launches->capacity())
 		rotateArchive();
@@ -51,7 +52,7 @@ Launch* Profiler::start(gpuStream_t stream, const void* deviceFun,
 		deviceFun,
 		begin, end,
 		numBlocks, dimBlocks,
-		sharedMemBytes
+		sharedMemBytes, stream
 	});
 
 	auto launch = &launches->at(launches->size() - 1);
