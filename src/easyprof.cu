@@ -211,7 +211,7 @@ Profiler::~Profiler()
 		if (!result.second.second.size()) continue;
 
 		// TODO If the name is long, maybe shorten it to the last part after ::
-		std::cout << name << " (" << nregisters << " registers)" << std::endl;
+		std::cout << "\"" << name << "\"" << " (" << nregisters << " registers)" << std::endl;
 		
 		for (auto& grid : result.second.second)
 		{
@@ -230,6 +230,35 @@ Profiler::~Profiler()
 				(sharedMemBytes ? ", " + std::to_string(sharedMemBytes) : "") << ">>> " <<
 				"min = " << min << "ms, max = " << max << "ms, avg = " << avg << "ms" << std::endl;
 		}
+	}
+
+	// Look on how many different streams IDs the kernel was executed.
+	std::map<const void*, std::map<gpuStream_t, unsigned int> > kernels_streams;
+	for (const auto& launches : archive)
+		for (const auto& launch : launches)
+		{
+			const auto& stream = launch.stream;
+			const auto& deviceFun = launch.deviceFun;
+
+			kernels_streams[deviceFun][stream]++;
+		}
+
+	for (auto& [_, func] : funcs)
+	{
+		const auto& deviceFun = func.deviceFun;
+		const auto& deviceName = func.deviceName;
+
+		const auto& streams = kernels_streams[deviceFun];
+		if (streams.size() == 0) continue;
+
+		// If kernel is launched only on the default (0) stream, do not print anything.
+		if ((streams.size() == 1) && (streams.at(static_cast<gpuStream_t>(0)) != 0)) continue;
+
+		// TODO If the name is long, maybe shorten it to the last part after ::
+		std::cout << "\"" << deviceName << "\"" << " non-default streams:";
+		for (auto & [id, count] : streams)
+			std::cout << " [ stream = " << id << " : ncalls = " << count << " ]";
+		std::cout << std::endl;
 	}
 }
 
