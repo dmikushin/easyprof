@@ -44,7 +44,6 @@ inline const char* gpuGetErrorString(CUresult err)
 	return errStr;
 }
 #define gpuLaunchKernel(...) cuLaunchKernel(__VA_ARGS__)
-#define LIBGPU "/usr/lib/x86_64-linux-gnu/libcuda.so"
 #define LIBGPURT "/usr/local/cuda/lib64/libcudart.so"
 #endif
 

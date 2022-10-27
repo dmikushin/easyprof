@@ -21,6 +21,7 @@ file(GLOB SRCS "src/*.cu")
 add_library(${PROJECT_NAME}_cuda SHARED ${SRCS})
 target_include_directories(${PROJECT_NAME}_cuda PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 set_target_properties(${PROJECT_NAME}_cuda PROPERTIES CUDA_RUNTIME_LIBRARY SHARED)
+target_compile_definitions(${PROJECT_NAME}_cuda PRIVATE LIBGPU="$<TARGET_FILE:CUDA::cuda_driver>")
 target_link_libraries(${PROJECT_NAME}_cuda ${CMAKE_DL_LIBS} CUDA::cuda_driver)
 
 set(${PROJECT_NAME}_target ${PROJECT_NAME}_cuda)
