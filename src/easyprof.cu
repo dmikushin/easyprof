@@ -65,9 +65,10 @@ Launch* Profiler::start(const void* deviceFun,
 #else
 	auto err = hipStreamAddCallback(stream, [](hipStream_t stream, hipError_t status, void *userData)
 #endif
-	{
+	{	
 		auto& launch = *reinterpret_cast<Launch*>(userData);
 		launch.begin = std::chrono::high_resolution_clock::now();
+		launch.stream = stream;
 	},
 	launch, 0);
 	
@@ -84,6 +85,13 @@ void Profiler::stop(gpuStream_t stream, Launch* launch)
 	{
 		auto& launch = *reinterpret_cast<Launch*>(userData);
 		launch.end = std::chrono::high_resolution_clock::now();
+#ifdef REASSIGN_STREAMS
+		// Tell the original stream that the kernel has finished on this stream.
+		gpuEventRecord(launch.event, launch.stream);
+		
+		// Destroy the new stream.
+		gpuStreamDestroy(stream);
+#endif
 	},
 	launch, 0);
 }

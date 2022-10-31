@@ -14,6 +14,7 @@
 #include <hip/hip_ext.h>
 using gpuError_t = hipError_t;
 using gpuStream_t = hipStream_t;
+using gpuEvent_t = hipEvent_t;
 using gpuModule_t = hipModule_t;
 using gpuFunction_t = hipFunction_t;
 using gpuEvent_t = hipEvent_t;
@@ -24,12 +25,19 @@ static const auto gpuSuccess = hipSuccess;
 #define gpuFuncGetAttribute(...) hipFuncGetAttribute(__VA_ARGS__)
 #define gpuGetLastError() hipGetLastError()
 #define gpuGetErrorString(...) hipGetErrorString(__VA_ARGS__)
+#define gpuEventCreate(...) hipEventCreate(__VA_ARGS__)
+#define gpuEventDestroy(...) hipEventDestroy(__VA_ARGS__)
+#define gpuEventRecord(...) hipEventRecord(__VA_ARGS__)
+#define gpuStreamCreateWithPriority(...) hipStreamCreateWithPriority(__VA_ARGS__)
+#define gpuStreamDestroy(...) hipStreamDestroy(__VA_ARGS__)
+#define gpuStreamGetPriority(...) hipStreamGetPriority(__VA_ARGS__)
 #define LIBGPURT "/opt/rocm/hip/lib/libamdhip64.so"
 #else
 #include <cuda.h>
 #include <cuda_runtime.h>
 using gpuError_t = CUresult;
 using gpuStream_t = CUstream;
+using gpuEvent_t = CUevent;
 using gpuModule_t = CUmodule;
 using gpuFunction_t = CUfunction;
 static const auto gpuSuccess = CUDA_SUCCESS;
@@ -44,6 +52,12 @@ inline const char* gpuGetErrorString(CUresult err)
 	return errStr;
 }
 #define gpuLaunchKernel(...) cuLaunchKernel(__VA_ARGS__)
+#define gpuEventCreate(...) cudaEventCreate(__VA_ARGS__)
+#define gpuEventDestroy(...) cudaEventDestroy(__VA_ARGS__)
+#define gpuEventRecord(...) cudaEventRecord(__VA_ARGS__)
+#define gpuStreamCreateWithPriority(...) cudaStreamCreateWithPriority(__VA_ARGS__)
+#define gpuStreamDestroy(...) cudaStreamDestroy(__VA_ARGS__)
+#define gpuStreamGetPriority(...) cudaStreamGetPriority(__VA_ARGS__)
 #define LIBGPURT "/usr/local/cuda/lib64/libcudart.so"
 #endif
 
@@ -107,6 +121,8 @@ struct GPUfunction
 
 using Timestamp = std::chrono::time_point<std::chrono::high_resolution_clock>;
 
+//#define REASSIGN_STREAMS
+
 struct Launch
 {
 	const void* deviceFun;
@@ -114,6 +130,9 @@ struct Launch
 	dim3 numBlocks, dimBlocks;
 	unsigned int sharedMemBytes;
 	gpuStream_t stream;
+#ifdef REASSIGN_STREAMS
+	gpuEvent_t event;
+#endif
 };
 
 // Maintaining the proper order of destruction.

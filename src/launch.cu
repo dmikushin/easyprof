@@ -126,7 +126,20 @@ RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, 
 			abort();
 		}
 	}
+#ifdef REASSIGN_STREAMS
+	// Create a new stream, and put the kernel into it, instead of
+	// the original one.
+	auto streamOrig = stream;
+	int priority;
+	gpuStreamGetPriority(streamOrig, &priority);
+	gpuStreamCreateWithPriority(&stream, 0, priority);
 
+	// Note the parent stream may not unblock until the kernel is finished
+	// on this new stream.
+	cudaEvent_t event;
+	gpuEventCreate(&event);
+	streams[stream].addEvent(event);
+#endif
 	// Start profiling the newly-launched kernel.
 	// Insert a callback into the same stream before and after the launch,
 	// in order to have the time measurement started and stopped.
@@ -134,7 +147,10 @@ RetTy gpuFuncLaunch(const std::string dll, std::string sym, gpuStream_t stream, 
 		dim3(gridDimX, gridDimY, gridDimZ),
 		dim3(blockDimX, blockDimY, blockDimZ),
 		sharedMemBytes, stream);
-
+#ifdef REASSIGN_STREAMS
+	launch->stream = streamOrig;
+	launch->event = event;
+#endif
 	// Call the real kernel launch function.
 	auto result = std::invoke(funcReal, args...);
 
