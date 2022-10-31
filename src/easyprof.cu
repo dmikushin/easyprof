@@ -56,7 +56,7 @@ Launch* Profiler::start(const void* deviceFun,
 	});
 
 	auto launch = &launches->at(launches->size() - 1);
-	
+#ifdef TIMING_CALLBACKS
 	// CUDA/HIP APIs can execute a user callback function, when the corresponding
 	// stream reaches the point of interest. We use this feature to track kernels
 	// execution in a simple way.
@@ -71,12 +71,13 @@ Launch* Profiler::start(const void* deviceFun,
 		launch.stream = stream;
 	},
 	launch, 0);
-	
+#endif
 	return launch;
 }
 
 void Profiler::stop(gpuStream_t stream, Launch* launch)
 {
+#ifdef TIMING_CALLBACKS
 #ifdef __CUDACC__
 	auto err = cuStreamAddCallback(stream, [](CUstream stream, CUresult status, void *userData)
 #else
@@ -94,6 +95,7 @@ void Profiler::stop(gpuStream_t stream, Launch* launch)
 #endif
 	},
 	launch, 0);
+#endif
 }
 
 Profiler::~Profiler()
@@ -138,7 +140,9 @@ Profiler::~Profiler()
 	}
 
 	// Accumulate the results.
+#ifdef TIMING_CALLBACKS
 	bool notFullyCaptured = false;
+#endif
 	for (auto& [_, func] : funcs)
 	{
 		const auto& deviceFun = func.deviceFun;
@@ -155,10 +159,10 @@ Profiler::~Profiler()
 			for (const auto& launch : launches)
 			{
 				if (launch.deviceFun != deviceFun) continue;
-			
+#ifdef TIMING_CALLBACKS
 				const auto& begin = launch.begin;
 				const auto& end = launch.end;
-				
+
 				// Ignore launches, which are not fully captured.
 				std::chrono::time_point<std::chrono::high_resolution_clock> zero {};
 				if (end == zero)
@@ -172,16 +176,17 @@ Profiler::~Profiler()
 					notFullyCaptured = true;
 					continue;
 				}
-
+#endif
 				const auto& numBlocks = launch.numBlocks;
 				const auto& dimBlocks = launch.dimBlocks;
 				const auto& sharedMemBytes = launch.sharedMemBytes;
 
 				auto& stats = result.second[std::make_tuple(numBlocks, dimBlocks, sharedMemBytes)];
+				auto& ncalls = std::get<3>(stats);
+#ifdef TIMING_CALLBACKS
 				auto& min = std::get<0>(stats);
 				auto& max = std::get<1>(stats);
 				auto& avg = std::get<2>(stats);
-				auto& ncalls = std::get<3>(stats);
 				
 				if (ncalls)
 				{
@@ -198,17 +203,18 @@ Profiler::~Profiler()
 				assert(max > 0.0);
 				
 				avg += duration;
+#endif
 				ncalls++;
 			} 
 		}
 	}
-	
+#ifdef TIMING_CALLBACKS	
 	if (notFullyCaptured)
 	{
 		fprintf(stderr, "Not all kernels launches were captured correctly,"
 			" the app could have GPU errors or is interrupted\n");
 	}
-		
+#endif	
 	// Conclude and report the results.
 	for (auto& result : results)
 	{
@@ -226,17 +232,20 @@ Profiler::~Profiler()
 			const dim3& numBlocks = std::get<0>(grid.first);
 			const dim3& dimBlocks = std::get<1>(grid.first);
 			const auto& sharedMemBytes = std::get<2>(grid.first);
-			
+			const unsigned int ncalls = std::get<3>(grid.second);
+
+			std::cout << ncalls << " x <<<(" << numBlocks.x << ", " << numBlocks.y << ", " << numBlocks.z << "), (" <<
+				dimBlocks.x << ", " << dimBlocks.y << ", " << dimBlocks.z << ")" <<
+				(sharedMemBytes ? ", " + std::to_string(sharedMemBytes) : "") << ">>> ";
+#ifdef TIMING_CALLBACKS			
 			const auto min = std::get<0>(grid.second);
 			const auto max = std::get<1>(grid.second);
 			auto& avg = std::get<2>(grid.second);
-			const unsigned int ncalls = std::get<3>(grid.second);
 			avg /= ncalls;
 			
-			std::cout << ncalls << " x <<<(" << numBlocks.x << ", " << numBlocks.y << ", " << numBlocks.z << "), (" <<
-				dimBlocks.x << ", " << dimBlocks.y << ", " << dimBlocks.z << ")" <<
-				(sharedMemBytes ? ", " + std::to_string(sharedMemBytes) : "") << ">>> " <<
-				"min = " << min << "ms, max = " << max << "ms, avg = " << avg << "ms" << std::endl;
+			std::cout << ncalls << "min = " << min << "ms, max = " << max << "ms, avg = " << avg << "ms";
+#endif
+			std::cout << std::endl;
 		}
 	}
 

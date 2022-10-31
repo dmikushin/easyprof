@@ -121,6 +121,10 @@ struct GPUfunction
 
 using Timestamp = std::chrono::time_point<std::chrono::high_resolution_clock>;
 
+// Enable kernels timing via assignment of callbacks
+//#define TIMING_CALLBACKS
+
+// Re-assign new independent streams to the kernels, which apparently could run independently.
 //#define REASSIGN_STREAMS
 
 struct Launch
